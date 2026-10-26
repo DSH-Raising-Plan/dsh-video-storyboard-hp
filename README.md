@@ -4,6 +4,8 @@
 
 > Community project. Not affiliated with DeepSeek.
 >
+> **中文说明：[README.zh.md](./README.zh.md)** — 创新点、实现原理、实测基线、路线图。
+>
 > **Requires:** Node ≥ 20, `ffmpeg`/`ffprobe` on `PATH`. No other runtime dependencies.
 
 ## Quick start
