@@ -1,0 +1,300 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  bestLayout, canvasAspect, cellSize, groupByCount, groupByDuration, planTotal,
+  planWindows, snapCells, suggest, validatePlan, COVERAGE, IMAGE_TOKEN_CAP, MIN_CELL_H, MIN_CELL_W,
+} from '../src/plan.js';
+
+const L = 16 / 9;
+const P = 9 / 16;
+
+/* ---------------------------------------------------------------- 布局：画布比例 */
+
+test('bestLayout: 16:9 源，平方数还原 16:9 画布', () => {
+  for (const n of [1, 4, 9, 16]) {
+    const { cols, rows, canvasAspect: ca } = bestLayout(n, L);
+    assert.equal(cols, rows, `n=${n} 应为方形`);
+    assert.ok(Math.abs(ca - L) < 1e-9, `n=${n} 画布应为 16:9，实得 ${ca}`);
+  }
+});
+
+test('bestLayout: 非平方数选更接近源比例的方向（12 → 3×4 而非 4×3）', () => {
+  const { cols, rows, canvasAspect: ca } = bestLayout(12, L);
+  assert.deepEqual([cols, rows], [3, 4]);
+  assert.ok(ca < L, '较高的画布优于超宽画布');
+  // 反例：4×3 的画布是 2.37:1，明显偏离 16:9
+  assert.ok(canvasAspect(4, 3, L) > L * 1.3);
+});
+
+test('bestLayout: 6 格选 2×3（1.19）而不是 3×2（2.67）', () => {
+  const { cols, rows, canvasAspect: ca } = bestLayout(6, L);
+  assert.deepEqual([cols, rows], [2, 3]);
+  assert.ok(Math.abs(ca - 1.19) < 0.02, `实得 ${ca.toFixed(3)}`);
+  assert.ok(canvasAspect(3, 2, L) > 2.5, '3×2 是超宽反例');
+});
+
+test('bestLayout: 竖屏源同样成立（9:16 → 3×3 还原 9:16）', () => {
+  const { cols, rows, canvasAspect: ca } = bestLayout(9, P);
+  assert.deepEqual([cols, rows], [3, 3]);
+  assert.ok(Math.abs(ca - P) < 1e-9);
+});
+
+test('bestLayout: 画布从不偏离源比例超过 50%（n=4..16）', () => {
+  for (let n = 4; n <= 16; n++) {
+    const ca = bestLayout(n, L).canvasAspect;
+    const ratio = ca / L;
+    assert.ok(ratio <= 1.5 && ratio >= 0.6, `n=${n} ratio=${ratio.toFixed(2)}`);
+  }
+});
+
+test('bestLayout: 允许 padding，且浪费不超过 25%', () => {
+  for (let n = 1; n <= 16; n++) {
+    const { capacity } = bestLayout(n, L);
+    assert.ok(capacity >= n, `n=${n} capacity=${capacity}`);
+    assert.ok(capacity - n <= Math.ceil(n * 0.25), `n=${n} 浪费 ${capacity - n} 格过多`);
+  }
+});
+
+test('bestLayout: 非法输入直接抛错', () => {
+  assert.throws(() => bestLayout(0, L), RangeError);
+  assert.throws(() => bestLayout(2.5, L), RangeError);
+  assert.throws(() => bestLayout(4, 0), RangeError);
+});
+
+/* ---------------------------------------------------------------- 单元格尺寸 */
+
+test('cellSize: 640k 预算下的理论单格（未扣间隙）', () => {
+  // 注意：渲染时还会扣掉 gutter，实际像素比这里小 ~6px，见 sheet.js
+  const cases = [
+    [2, 2, 533, 300],
+    [3, 3, 356, 200],
+    [3, 4, 308, 173],
+    [4, 4, 267, 150],
+    [5, 5, 213, 120],
+  ];
+  for (const [cols, rows, w, h] of cases) {
+    const cell = cellSize(cols, rows, L);
+    assert.ok(Math.abs(cell.w - w) <= 1, `${cols}x${rows} w=${cell.w} 期望≈${w}`);
+    assert.ok(Math.abs(cell.h - h) <= 1, `${cols}x${rows} h=${cell.h} 期望≈${h}`);
+  }
+});
+
+test('cellSize: 格数越多，单格越小（单调）', () => {
+  let prev = Infinity;
+  for (const n of [1, 4, 6, 9, 12, 16]) {
+    const { cols, rows } = bestLayout(n, L);
+    const { area } = cellSize(cols, rows, L);
+    assert.ok(area < prev, `n=${n} 的单格面积没有随格数下降`);
+    prev = area;
+  }
+});
+
+/* ---------------------------------------------------------------- suggest */
+
+const meta = (duration, cuts, extra = {}) => ({ duration, cuts, aspect: L, ...extra });
+
+test('suggest: 时长与镜头密度决定格数', () => {
+  assert.equal(suggest(meta(60, 8)).cells, 4);
+  assert.equal(suggest(meta(60, 8)).sheets, 1);
+
+  const single = suggest(meta(480, 0));
+  assert.equal(single.cells, 4);
+  assert.match(single.reason, /单镜头/);
+
+  assert.equal(suggest(meta(300, 40)).cells, 9, '均镜头 7.3s → 9 格');
+  assert.equal(suggest(meta(300, 40)).sheets, 1);
+
+  assert.equal(suggest(meta(700, 700)).sheets, 2, '快剪长视频拆两张');
+  assert.equal(suggest(meta(900, 60)).sheets, 2);
+  assert.equal(suggest(meta(1500, 90)).sheets, 4, '25min → 封顶 4 张');
+});
+
+test('suggest: 真实素材回归（B站 299s / 88 cuts → 16 格）', () => {
+  // 实测：这条片子 9 格（33s/格）大量重复草地镜头，16 格（19s/格）才覆盖到产品/人物/采访
+  const s = suggest({ duration: 299.41, cuts: 88, aspect: L });
+  assert.equal(s.cells, 16);
+  assert.equal(s.sheets, 1);
+  assert.equal(s.coverage, 'timeline');
+});
+
+test('suggest: 画面变化密度决定每格秒数（真实素材回归）', () => {
+  // B-roll 类：299s、p90=7.9 → 20s/格 → 16 格
+  assert.equal(suggest({ duration: 299.41, cuts: 200, motion: 7.9, aspect: L }).cells, 16);
+  // 概念 PV：90s、p90=26 → 12s/格 → 9 格
+  assert.equal(suggest({ duration: 90.1, cuts: 80, motion: 26.1, aspect: L }).cells, 9);
+  // 正式 PV：92s、p90=17 → 12s/格 → 9 格
+  assert.equal(suggest({ duration: 92.2, cuts: 60, motion: 17, aspect: L }).cells, 9);
+  // 静态单镜头：251s
+  assert.equal(suggest({ duration: 251, cuts: 0, motion: 2.2, aspect: L }).cells, 4);
+  // 快剪长视频：1090s、p90=15 → 12s/格 → 封顶 16，且 >20min 拆 2 张
+  const long = suggest({ duration: 1090, cuts: 700, motion: 15, aspect: L });
+  assert.equal(long.cells, 16);
+  assert.equal(long.sheets, 2);
+});
+
+test('suggest: 格数不超过镜头数', () => {
+  const s = suggest(meta(600, 11));           // 12 个镜头
+  assert.ok(s.cells <= 12, `cells=${s.cells} 超过镜头数`);
+});
+
+test('suggest: 台词密度高时降档（图只做锚点）', () => {
+  const dense = suggest(meta(600, 30, { hasSubtitle: true, speechRate: 4.2 }));
+  const plain = suggest(meta(600, 30, { speechRate: 1.5 }));
+  assert.ok(dense.cells < plain.cells, `${dense.cells} 应小于 ${plain.cells}`);
+  assert.ok(dense.cells >= 4);
+});
+
+test('suggest: 时长必须为正', () => {
+  assert.throws(() => suggest({ duration: 0, cuts: 0 }), RangeError);
+});
+
+test('snapCells: 吸附到不留空格的格数', () => {
+  assert.deepEqual([8, 10, 11, 13, 15, 20, 1].map(snapCells), [9, 9, 12, 12, 16, 16, 4]);
+});
+
+/* ---------------------------------------------------------------- 多张分组 */
+
+test('groupByDuration: 切点落在段边界，覆盖时长均衡', () => {
+  const segs = [[0, 2.5], [2.5, 4.5], [4.5, 7], [7, 12.8], [12.8, 14.8], [14.8, 22.8], [22.8, 25.8], [25.8, 27.8]];
+  const groups = groupByDuration(segs, 2);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].length + groups[1].length, segs.length, '不能丢段');
+  const dur = (g) => g.reduce((s, [a, b]) => s + (b - a), 0);
+  const [d0, d1] = [dur(groups[0]), dur(groups[1])];
+  const target = (d0 + d1) / 2;
+  assert.ok(Math.abs(d0 - target) <= target * 0.35, `组时长失衡：${d0} vs ${d1}`);
+  assert.equal(groups[1][0][0], groups[0].at(-1)[1], '组边界必须首尾相接（不劈镜头）');
+});
+
+test('groupByDuration: sheets=1 返回整份，顺序不变', () => {
+  const segs = [[0, 1], [1, 2], [2, 3]];
+  assert.deepEqual(groupByDuration(segs, 1), [segs]);
+});
+
+test('groupByDuration: 段数少于张数时补空组', () => {
+  const groups = groupByDuration([[0, 1], [1, 2]], 3);
+  assert.equal(groups.length, 3);
+  assert.equal(groups[2].length, 0);
+});
+
+test('groupByCount: 每张正好填满，不产生空格', () => {
+  const segs = Array.from({ length: 27 }, (_, i) => [i, i + 1]);
+  const groups = groupByCount(segs, 9, 3);
+  assert.equal(groups.length, 3);
+  for (const g of groups) assert.equal(g.length, 9, '每张必须正好 9 段');
+  assert.deepEqual(groups[2].at(-1), [26, 27]);
+});
+
+test('groupByCount: 段数不足时尾部为空（由调用方补 padding）', () => {
+  const groups = groupByCount([[0, 1], [1, 2]], 9, 2);
+  assert.equal(groups[0].length, 2);
+  assert.equal(groups[1].length, 0);
+});
+
+test('groupByDuration: 不修改入参', () => {
+  const segs = [[0, 1], [1, 2], [2, 3]];
+  groupByDuration(segs, 2);
+  assert.deepEqual(segs, [[0, 1], [1, 2], [2, 3]]);
+});
+
+/* ---------------------------------------------------------------- 总计划 */
+
+test('planTotal: token 数与 sheets 成正比', () => {
+  const p1 = planTotal(meta(300, 40), { sheets: 1, budgetImages: 4 });
+  const p2 = planTotal(meta(300, 40), { sheets: 2, budgetImages: 4 });
+  assert.equal(p1.approxTokens, IMAGE_TOKEN_CAP);
+  assert.equal(p2.approxTokens, IMAGE_TOKEN_CAP * 2);
+});
+
+test('planTotal: budgetImages 截断并标记', () => {
+  const p = planTotal(meta(1500, 90), { sheets: 4, budgetImages: 2 });
+  assert.equal(p.sheets, 2);
+  assert.equal(p.truncated, true);
+});
+
+test('planTotal: 显式 cells 被尊重，但超宽画布给告警', () => {
+  const p = planTotal(meta(300, 40), { cells: [4, 3] });
+  assert.deepEqual([p.cols, p.rows], [4, 3], '显式指定不被 bestLayout 改写');
+  const v = validatePlan(p, L);
+  assert.equal(v.ok, true, '4×3 只是次优，不是非法');
+  assert.ok(v.warnings.some((w) => /canvas aspect/.test(w)), '应给出画布比例告警');
+  // 真正非法的是极端超宽（6×1 ≈ 10.7:1）
+  const bad = planTotal(meta(300, 40), { cells: [6, 1] });
+  const vb = validatePlan(bad, L);
+  assert.equal(vb.ok, false);
+  assert.match(vb.errors.join(), /canvas aspect/);
+});
+
+test('planTotal: 默认档就是 balanced 3×3 ×1（先粗后细）', () => {
+  const p = planTotal(meta(300, 40));
+  assert.equal(p.coverage, 'balanced');
+  assert.deepEqual([p.cols, p.rows], [3, 3]);
+  assert.equal(p.sheets, 1);
+  assert.equal(p.approxTokens, 384);
+});
+
+/* ---------------------------------------------------------------- 护栏 */
+
+test('validatePlan: 单格过小时拒绝', () => {
+  const p = planTotal(meta(300, 40), { cells: [5, 5] });
+  const v = validatePlan(p, L);
+  assert.equal(v.ok, false);
+  assert.match(v.errors.join(), new RegExp(`${MIN_CELL_W}x${MIN_CELL_H}`));
+});
+
+test('validatePlan: 合法计划零告警', () => {
+  for (const cells of [[2, 2], [3, 3], [3, 4], [4, 4]]) {
+    const p = planTotal(meta(300, 40), { cells });
+    const v = validatePlan(p, L);
+    assert.deepEqual(v.errors, [], `${cells} 不该报错：${v.errors}`);
+  }
+});
+
+test('validatePlan: sheets 越界拒绝', () => {
+  const p = { cols: 3, rows: 3, sheets: 5, cell: { w: 355, h: 200 }, canvasAspect: L };
+  assert.equal(validatePlan(p, L).ok, false);
+});
+
+/* ---------------------------------------------------------------- 长片分段计划 */
+
+test('planWindows: 覆盖整片、不重叠、不超尾', () => {
+  const p = planWindows(1090, 300);
+  assert.equal(p.total, 4);
+  assert.equal(p.windows[0].from, 0);
+  assert.equal(p.windows.at(-1).to, 1090);
+  assert.equal(p.covered, 1090);
+  for (let i = 1; i < p.windows.length; i++) assert.equal(p.windows[i].from, p.windows[i - 1].to);
+});
+
+test('planWindows: 最后一段被裁到片尾，不会越界', () => {
+  const p = planWindows(650, 300);
+  assert.equal(p.total, 3);
+  assert.deepEqual(p.windows.map((w) => [w.from, w.to]), [[0, 300], [300, 600], [600, 650]]);
+  assert.equal(p.windows.at(-1).duration, 50);
+});
+
+test('planWindows: token 估算 = 每段图片数 × 384', () => {
+  const p = planWindows(900, 300);
+  assert.equal(p.approxTokens, 3 * IMAGE_TOKEN_CAP);
+});
+
+test('planWindows: 段数超上限时拉长每段，而不是砍掉尾巴', () => {
+  const p = planWindows(7200, 300);            // 2 小时，300s/段 = 24 段 > 12
+  assert.equal(p.total, 12);
+  assert.equal(p.stepAdjusted, true);
+  assert.equal(p.covered, 7200, '必须覆盖全片');
+  assert.equal(p.step, 600, '每段应被拉长到 600s');
+  assert.equal(p.requestedStep, 300);
+});
+
+test('planWindows: 段数在上限内时不调整', () => {
+  const p = planWindows(1090, 300);
+  assert.equal(p.stepAdjusted, false);
+  assert.equal(p.step, 300);
+});
+
+test('planWindows: 非法参数抛错', () => {
+  assert.throws(() => planWindows(0, 300), RangeError);
+  assert.throws(() => planWindows(100, 0), RangeError);
+});

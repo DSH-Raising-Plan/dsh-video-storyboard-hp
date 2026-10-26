@@ -1,0 +1,66 @@
+{
+  "name": "dsh-video-storyboard",
+  "version": "0.1.0",
+  "description": "Scene-aware storyboard for DeepSeek Harness: one addressable grid per video (numbered cells, timestamps, transcript, audio envelope) so a text-only agent can look at the video itself instead of being told a summary.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "video",
+    "storyboard",
+    "contact-sheet",
+    "ffmpeg",
+    "multimodal",
+    "asr"
+  ],
+  "author": "SAOS-3624",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./plan": "./src/plan.js",
+    "./scan": "./src/scan.js",
+    "./segments": "./src/segments.js",
+    "./probe": "./src/probe.js",
+    "./sheet": "./src/sheet.js",
+    "./pipeline": "./src/pipeline.js",
+    "./tool-spec": "./src/tool-spec.js"
+  },
+  "bin": {
+    "dsh-video-scan": "./bin/scan-video.mjs",
+    "dsh-video-storyboard": "./bin/storyboard.mjs"
+  },
+  "files": [
+    "src",
+    "bin",
+    "scripts",
+    "docs",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "README.md",
+    "LICENSE",
+    "CREDITS.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "prepublishOnly": "npm test",
+    "check": "for f in src/*.js bin/*.mjs scripts/*.mjs; do node --check \"$f\" || exit 1; done"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.7"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

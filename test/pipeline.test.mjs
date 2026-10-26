@@ -1,0 +1,198 @@
+/**
+ * pipeline.test.mjs — 端到端：真 ffmpeg 现造片子 → runStoryboard → 断言产物。
+ * 顺带验证 apply() 的接线（注册一次、名字正确），不依赖真实 DSH 宿主。
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+
+import { runStoryboard, formatManifest, saveStoryboards } from '../src/pipeline.js';
+import { DEFAULT_FFMPEG } from '../src/probe.js';
+
+const run = promisify(execFile);
+let hasFfmpeg = false;
+try { await run(DEFAULT_FFMPEG, ['-version']); hasFfmpeg = true; } catch { /* 无 */ }
+
+/** 6 个镜头各 1s，其中一个带 0.5s 的模糊（测 sharp 取帧） */
+async function makeFixture(dir) {
+  const out = join(dir, 'f.mp4');
+  const colors = ['0xff0000', '0x00ff00', '0x0000ff', '0xffff00', '0xff00ff', '0x00ffff'];
+  const args = ['-hide_banner', '-v', 'error', '-y'];
+  for (const c of colors) args.push('-f', 'lavfi', '-i', `color=c=${c}:s=320x180:r=25:d=1`);
+  args.push(
+    '-filter_complex', `${colors.map((_, i) => `[${i}]`).join('')}concat=n=6:v=1:a=0[v]`,
+    '-map', '[v]', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', out,
+  );
+  await run(DEFAULT_FFMPEG, args);
+  return out;
+}
+
+test('e2e: runStoryboard 出一张图 + 完整清单', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = await makeFixture(dir);
+
+  const r = await runStoryboard({ input: file, cells: 4, pick: 'sharp' });
+  assert.equal(r.sheets.length, 1);
+  const sheet = r.sheets[0];
+  assert.equal(sheet.cols * sheet.rows, 4);
+  assert.equal(sheet.buffer.length, sheet.width * sheet.height * 3);
+  assert.equal(sheet.cells.length, 4);
+  assert.ok(sheet.width * sheet.height <= 640_000, '不该超像素预算');
+
+  // 时间码单调、首尾相接、落在窗口内
+  for (let i = 1; i < sheet.cells.length; i++) {
+    assert.equal(sheet.cells[i].t_start, sheet.cells[i - 1].t_end);
+    assert.ok(sheet.cells[i].t_frame > sheet.cells[i - 1].t_frame);
+  }
+  assert.equal(sheet.cells[0].t_start, 0);
+  assert.ok(Math.abs(r.window.to - 6) < 0.2);
+});
+
+test('e2e: 交给附件的必须是真 PNG（裸 RGB 会被判 malformed）', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = await makeFixture(dir);
+
+  const r = await runStoryboard({ input: file, cells: 4 });
+  const { png, buffer, width, height } = r.sheets[0];
+  assert.ok(png && png.length > 0, '必须带 PNG 字节');
+  assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'PNG 魔数');
+  assert.equal(png.readUInt32BE(16), width, 'IHDR 宽度应与画布一致');
+  assert.equal(png.readUInt32BE(20), height, 'IHDR 高度应与画布一致');
+  assert.ok(png.length < buffer.length, 'PNG 应比裸 RGB 小（说明真的编码过）');
+});
+
+test('e2e: encode=false 时不产生 PNG（CLI 自己落盘）', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = await makeFixture(dir);
+  const r = await runStoryboard({ input: file, cells: 4, encode: false });
+  assert.equal(r.sheets[0].png, undefined);
+});
+
+test('e2e: 时间窗只覆盖窗口内，清单首行写明 window', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = await makeFixture(dir);
+
+  const r = await runStoryboard({ input: file, from: 2, to: 4, cells: 4 });
+  assert.ok(r.window.from >= 1.99 && r.window.from <= 2.01);
+  for (const c of r.sheets[0].cells) {
+    assert.ok(c.t_frame >= 1.9 && c.t_frame <= 4.1, `帧 ${c.t_frame} 跑出窗口`);
+  }
+  const text = formatManifest(r);
+  assert.match(text, /window="2\.00-4\.00"/);
+  assert.match(text, /cell 1 \(r1c1, image 1\)/);
+  assert.match(text, /unlabeled cells are padding/);
+});
+
+test('e2e: saveStoryboards 落盘（多张时带序号）', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = await makeFixture(dir);
+
+  const r = await runStoryboard({ input: file, cells: 4, sheets: 2 });
+  assert.equal(r.sheets.length, 2);
+  const paths = await saveStoryboards(r, join(dir, 'out.png'));
+  assert.equal(paths.length, 2);
+  assert.ok(paths[1].endsWith('out-2.png'));
+});
+
+test('e2e: 第二次调用命中缓存（切点不重扫）', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  const cacheDir = await mkdtemp(join(tmpdir(), 'dsh-cache-'));
+  const prev = process.env.DSH_VIDEO_CACHE_DIR;
+  process.env.DSH_VIDEO_CACHE_DIR = cacheDir;
+  t.after(async () => {
+    if (prev === undefined) delete process.env.DSH_VIDEO_CACHE_DIR;
+    else process.env.DSH_VIDEO_CACHE_DIR = prev;
+    await rm(dir, { recursive: true, force: true });
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+  const file = await makeFixture(dir);
+
+  const first = await runStoryboard({ input: file, cells: 4, encode: false });
+  const second = await runStoryboard({ input: file, cells: 4, encode: false });
+  assert.equal(first.cached, false);
+  assert.equal(second.cached, true, '第二次应命中缓存');
+  assert.deepEqual(first.cuts.map((c) => c.t), second.cuts.map((c) => c.t), '两次切点必须一致');
+});
+
+test('e2e: cache=false 时不读写缓存', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = await makeFixture(dir);
+  const r1 = await runStoryboard({ input: file, cells: 4, encode: false, cache: false });
+  const r2 = await runStoryboard({ input: file, cells: 4, encode: false, cache: false });
+  assert.equal(r1.cached, false);
+  assert.equal(r2.cached, false);
+});
+
+test('e2e: 非法 pick 立刻抛错（不跑 ffmpeg）', async () => {
+  await assert.rejects(() => runStoryboard({ input: 'x.mp4', pick: 'blurry' }), RangeError);
+});
+
+test('插件接线: apply() 注册一个叫 video_storyboard 的工具', async (t) => {
+  const host = join(homedir(), '.dsh/profiles/node_modules/@deepseek-ai/dsh-tools/lib/index.js');
+  if (existsSync(host) && !process.env.DSH_TOOLS_PATH) process.env.DSH_TOOLS_PATH = host;
+  const { apply, name: pluginName, inject } = await import('../src/index.js');
+  assert.equal(pluginName, 'dsh-video-storyboard');
+  assert.deepEqual(inject, ['tools', 'attachments']);
+
+  const registered = [];
+  let disposed = 0;
+  const saved = [];
+  const ctx = {
+    tools: { register: (tool) => { registered.push(tool); return () => { disposed += 1; }; } },
+    attachments: {
+      saveImage: async (input) => {
+        saved.push(input);
+        return { attachmentId: 'stub', mediaType: input.mediaType, bytes: input.data.length };
+      },
+    },
+  };
+  try {
+    const disposer = await apply(ctx);
+    assert.deepEqual(registered.map((t) => t.name).sort(), ['video_storyboard', 'video_zoom']);
+    assert.equal(typeof disposer, 'function', 'apply 必须返回 disposer');
+    disposer();
+    assert.equal(disposed, 2, '两个工具都应被释放');
+    // 真跑一次 execute，确保交给附件的是真 PNG（这一条能抓住线上那个 malformed 事故）
+    const dir2 = await mkdtemp(join(tmpdir(), 'dsh-exec-'));
+    t.after(() => rm(dir2, { recursive: true, force: true }));
+    const fixture = await makeFixture(dir2);
+    const storyboard = registered.find((t) => t.name === 'video_storyboard');
+    const value = await storyboard.execute({ input: fixture, cells: 4 });
+    assert.equal(saved.length, 1, '应提交一张图');
+    assert.equal(saved[0].mediaType, 'image/png');
+    assert.equal(saved[0].data.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', '必须是 PNG 魔数');
+    assert.match(value.text, /<storyboard[\s\S]*cell 1/);
+    assert.equal(value.images.length, 1);
+
+    // zoom 也要真跑一次：窗口收窄、单图、格数默认 6
+    saved.length = 0;
+    const zoom = registered.find((t) => t.name === 'video_zoom');
+    const z = await zoom.execute({ input: fixture, from: 1, to: 3 });
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].data.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert.match(z.text, /window="1\.00-3\.00"/);
+  } catch (error) {
+    if (/Cannot find package|Cannot find module/.test(String(error))) {
+      return t.skip('host @deepseek-ai/dsh-tools not resolvable here');
+    }
+    throw error;
+  }
+});

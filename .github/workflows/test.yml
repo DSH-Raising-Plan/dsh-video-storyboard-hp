@@ -1,0 +1,29 @@
+name: test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: syntax check
+        run: for f in src/*.js bin/*.mjs scripts/*.mjs; do node --check "$f"; done
+
+      - name: unit + e2e tests
+        run: npm test
+        # test/contract.test.mjs self-skips when no local DSH install is present.

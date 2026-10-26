@@ -1,0 +1,14 @@
+node_modules/
+*.log
+
+# CLI 默认输出（别把生成物提交进仓库）
+storyboard*.png
+*-1.png
+*-2.png
+*-3.png
+*-4.png
+manifest*.json
+
+# 本地临时/调试产物
+.tmp/
+_probe/

@@ -1,0 +1,204 @@
+/**
+ * tool-spec.js — 工具定义（**不含 execute**）。
+ *
+ * 单独抽出来是为了让 test/contract.test.mjs 能把同一份 spec 丢给宿主真实的
+ * `defineTool` 编译一遍。这一步必须做：schema 用了宿主不认的关键字时，
+ * `ctx.tools.register()` 会在 apply() 阶段抛错，整棵插件树（连带应用）都起不来。
+ *
+ * 宿主支持的子集（见 @deepseek-ai/dsh-tools 的 ValueSchemaSpec）：
+ *   string / number / integer / boolean / null / array(items) / object(properties, additionalProperties) / json / oneOf
+ * **不支持** minimum、maximum、pattern、maxItems、minLength、format 等注解式约束。
+ * 所以取值范围（比如 cells 1..16）写在 description 里，由 execute 兜底校验。
+ */
+
+export const TOOL_NAME = 'video_storyboard';
+export const ZOOM_TOOL_NAME = 'video_zoom';
+
+export function storyboardToolSpec() {
+  return {
+    name: TOOL_NAME,
+    description: [
+      'Turn a local video into ONE addressable storyboard image (a numbered grid of frames)',
+      'plus a text index of every cell, so you can look at the video yourself instead of guessing.',
+      '',
+      'Each cell is one content segment (shot-aware), sampled at its sharpest frame, with the cell',
+      'number burned into the top-left corner. The text lists "cell k (r2c3) = 00:12.76-00:31.40"',
+      'so you can cite a moment or ask for a close-up later with video_zoom.',
+      '',
+      'Use it like this:',
+      '- Whole short clip: video_storyboard({ input })',
+      '- Long film, read in slices: video_storyboard({ input, from: 600, to: 900 })',
+      '- Wide shot of a long film: video_storyboard({ input, cells: 16, sheets: 2 })',
+      '',
+      'Cell count is chosen automatically from duration and how fast the picture changes',
+      '(fast-cut content gets more cells). Pass cells/sheets only if you want to override.',
+    ].join('\n'),
+    parameters: {
+      input: {
+        type: 'string',
+        required: true,
+        description: 'Absolute path to a video file readable by ffmpeg (mp4/mov/mkv/webm...).',
+      },
+      from: {
+        type: 'number',
+        description: 'Window start in seconds (default 0). Only this window is scanned and sampled.',
+      },
+      to: {
+        type: 'number',
+        description: 'Window end in seconds (default: end of file).',
+      },
+      cells: {
+        type: 'integer',
+        description: 'Cells per image, 1-16 (default: auto). More cells = more coverage but smaller each.',
+      },
+      sheets: {
+        type: 'integer',
+        description: 'How many images to return, 1-4 (default: auto). Each extra image costs another 384 tokens.',
+      },
+      pick: {
+        type: 'string',
+        enum: ['sharp', 'mid', 'thumb'],
+        description: 'Frame selection inside a segment. Default "sharp" (Laplacian variance) avoids blurred transition frames.',
+      },
+      burn: {
+        type: 'string',
+        enum: ['index', 'index+time', 'none'],
+        description: 'What to burn into each cell. Default "index". "index+time" adds a timestamp but is hard to read at small cell sizes.',
+      },
+      minGap: {
+        type: 'number',
+        description: 'Minimum spacing between sampled frames in seconds (default 1.2). Short shots get merged, not sampled twice.',
+      },
+      transcript: {
+        type: 'string',
+        enum: ['auto', 'off'],
+        description: 'Default "auto": use the embedded subtitle track if present, otherwise ASR when configured. "off" skips speech entirely.',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          text: { type: 'string', required: true, description: 'The addressable cell index for the model.' },
+          images: {
+            type: 'array',
+            required: true,
+            items: { type: 'json' },
+            description: 'Committed image attachments, one per storyboard sheet.',
+          },
+        },
+      },
+      render(args, value) {
+        return [
+          ...value.images.map((attachment) => ({ type: 'image', attachment })),
+          { type: 'text', text: value.text },
+        ];
+      },
+    },
+    timeoutMs: 900_000,
+    isConcurrencySafe() {
+      return true;
+    },
+  };
+}
+
+/**
+ * 第二个工具：一段的近距离重看。与 storyboard 共用管线，只是把窗口收窄、格数调少，
+ * 于是每格能分到接近原生分辨率的像素。
+ */
+export function zoomToolSpec() {
+  return {
+    name: ZOOM_TOOL_NAME,
+    description: [
+      'Re-read a short window of a video at higher per-cell resolution.',
+      '',
+      'Use it after video_storyboard when one cell needs a closer look: "what exactly is on screen',
+      'at 01:12-01:20?" A zoom returns ONE image with few, large cells (default 6), so faces,',
+      'subtitles and on-screen text become legible — things a 16-cell overview cannot show.',
+      '',
+      'Keep the window short (a few seconds to a minute). For another wide pass use video_storyboard.',
+      'Costs one image (~384 tokens), like any other tool result with one image.',
+    ].join('\n'),
+    parameters: {
+      input: { type: 'string', required: true, description: 'Absolute path to the video file.' },
+      from: { type: 'number', required: true, description: 'Window start in seconds.' },
+      to: { type: 'number', required: true, description: 'Window end in seconds.' },
+      cells: {
+        type: 'integer',
+        description: 'Cells for this window, 1-9 (default 6). Fewer cells = bigger each.',
+      },
+      pick: {
+        type: 'string',
+        enum: ['sharp', 'mid', 'thumb'],
+        description: 'Frame selection inside each cell. Default "sharp".',
+      },
+      burn: {
+        type: 'string',
+        enum: ['index', 'index+time', 'none'],
+        description: 'What to burn into each cell. Default "index".',
+      },
+      transcript: {
+        type: 'string',
+        enum: ['auto', 'off'],
+        description: 'Include subtitle/ASR text for this window. Default "auto".',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          text: { type: 'string', required: true, description: 'Cell index for this window.' },
+          images: { type: 'array', required: true, items: { type: 'json' } },
+        },
+      },
+      render(args, value) {
+        return [
+          ...value.images.map((attachment) => ({ type: 'image', attachment })),
+          { type: 'text', text: value.text },
+        ];
+      },
+    },
+    timeoutMs: 300_000,
+    isConcurrencySafe() {
+      return true;
+    },
+  };
+}
+
+/** execute 内部兜底校验（schema 子集不支持 minimum/maximum，只能在这里挡） */
+export function validateToolArgs(args) {
+  const problems = [];
+  if (!args?.input || typeof args.input !== 'string') problems.push('input is required');
+  if (args.cells !== undefined && (!Number.isInteger(args.cells) || args.cells < 1 || args.cells > 16)) {
+    problems.push('cells must be an integer 1..16');
+  }
+  if (args.sheets !== undefined && (!Number.isInteger(args.sheets) || args.sheets < 1 || args.sheets > 4)) {
+    problems.push('sheets must be an integer 1..4');
+  }
+  if (args.from !== undefined && args.from < 0) problems.push('from must be >= 0');
+  if (args.to !== undefined && args.from !== undefined && args.to <= args.from) {
+    problems.push('to must be greater than from');
+  }
+  if (args.minGap !== undefined && !(args.minGap >= 0)) problems.push('minGap must be >= 0');
+  if (args.transcript !== undefined && !['auto', 'off'].includes(args.transcript)) {
+    problems.push("transcript must be 'auto' or 'off'");
+  }
+  return problems;
+}
+
+/** video_zoom 的兜底校验 */
+export function validateZoomArgs(args) {
+  const problems = [];
+  if (!args?.input || typeof args.input !== 'string') problems.push('input is required');
+  if (!(args?.from >= 0)) problems.push('from is required and must be >= 0');
+  if (!(args?.to > 0)) problems.push('to is required and must be > 0');
+  if (args?.from !== undefined && args?.to !== undefined && args.to <= args.from) {
+    problems.push('to must be greater than from');
+  }
+  if (args.cells !== undefined && (!Number.isInteger(args.cells) || args.cells < 1 || args.cells > 9)) {
+    problems.push('cells must be an integer 1..9');
+  }
+  return problems;
+}
