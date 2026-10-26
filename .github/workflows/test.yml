@@ -8,6 +8,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 12          # apt 偶尔卡住，别让它挂 6 小时
     strategy:
       fail-fast: false      # 一个版本挂了不要取消另一个，否则看不到全貌
       matrix:
@@ -20,7 +21,11 @@ jobs:
           node-version: ${{ matrix.node }}
 
       - name: install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        # --no-install-recommends 少装几十个可选的依赖，apt 快得多；也少一个卡住的点
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
 
       - name: syntax check
         run: for f in src/*.js bin/*.mjs scripts/*.mjs; do node --check "$f"; done
