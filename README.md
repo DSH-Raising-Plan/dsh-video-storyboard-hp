@@ -1,5 +1,7 @@
 # dsh-video-storyboard
 
+[![test](https://github.com/SAOS-3624/dsh-video-storyboard/actions/workflows/test.yml/badge.svg)](https://github.com/SAOS-3624/dsh-video-storyboard/actions/workflows/test.yml)
+
 **A scene-aware storyboard for text-only agents.** Feed a video in, get one addressable grid out: numbered cells, a timestamp per cell, and the transcript line that falls inside it — so the model can *look*, *cite a cell*, and *ask for a close-up* instead of being told a summary.
 
 > Community project. Not affiliated with DeepSeek.

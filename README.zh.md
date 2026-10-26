@@ -1,5 +1,7 @@
 # dsh-video-storyboard · 中文说明
 
+[![test](https://github.com/SAOS-3624/dsh-video-storyboard/actions/workflows/test.yml/badge.svg)](https://github.com/SAOS-3624/dsh-video-storyboard/actions/workflows/test.yml)
+
 **给纯文本模型装一双"能翻页的眼睛"。**
 
 输入一个视频，输出**一张可寻址的宫格图**：每格烧着编号、对应一段时间、下面挂着那段时间里说过的台词；底部还有一条与画面**同时间轴**的音频包络。模型因此可以「看」、可以「引用第 5 格」、可以「再放大看这 3 秒」，而不是被动接受一段别人写好的摘要。
