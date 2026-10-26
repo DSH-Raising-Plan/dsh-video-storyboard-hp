@@ -13,6 +13,14 @@
     "multimodal",
     "asr"
   ],
+  "homepage": "https://github.com/SAOS-3624/dsh-video-storyboard#readme",
+  "bugs": {
+    "url": "https://github.com/SAOS-3624/dsh-video-storyboard/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SAOS-3624/dsh-video-storyboard.git"
+  },
   "author": "SAOS-3624",
   "license": "MIT",
   "type": "module",

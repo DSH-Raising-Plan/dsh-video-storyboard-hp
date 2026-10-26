@@ -147,7 +147,9 @@ test('e2e: 非法 pick 立刻抛错（不跑 ffmpeg）', async () => {
 
 test('插件接线: apply() 注册一个叫 video_storyboard 的工具', async (t) => {
   const host = join(homedir(), '.dsh/profiles/node_modules/@deepseek-ai/dsh-tools/lib/index.js');
-  if (existsSync(host) && !process.env.DSH_TOOLS_PATH) process.env.DSH_TOOLS_PATH = host;
+  // CI 上没有 DSH 宿主包，apply() 会抛 "cannot resolve" —— 那是有意为之，跳过即可
+  if (!existsSync(host)) return t.skip('no local DSH install (@deepseek-ai/dsh-tools)');
+  if (!process.env.DSH_TOOLS_PATH) process.env.DSH_TOOLS_PATH = host;
   const { apply, name: pluginName, inject } = await import('../src/index.js');
   assert.equal(pluginName, 'dsh-video-storyboard');
   assert.deepEqual(inject, ['tools', 'attachments']);

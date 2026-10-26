@@ -9,6 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false      # 一个版本挂了不要取消另一个，否则看不到全貌
       matrix:
         node: [20, 22]
     steps:
