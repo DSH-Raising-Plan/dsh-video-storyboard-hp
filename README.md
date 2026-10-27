@@ -299,14 +299,11 @@ you to read the file in 5-minute windows instead of scanning it whole.
 Both run the same pipeline; zoom just narrows the window and drops `adaptive`, so each cell gets
 ~4× the pixels of a 16-cell overview.
 
-Two extra knobs on `video_zoom`, both aimed at fast-cut montage:
+For fast-cut montage, `video_zoom` takes `minGap: 0.4` — half-second shots then get their own cell instead
+of being merged into a neighbour (default 1.2 s).
 
-`minGap: 0.4` on `video_zoom` lowers the minimum spacing so half-second shots get their own cell instead of
-being merged into a neighbour (default 1.2 s).
-- `layout: 'strip'` — one row instead of a grid, for a 2–4 s beat where *sequence* matters more than any
-  single frame. Silently falls back to a grid when the strip would exceed 12:1. On the same 96–128 s window of a talking-head video:
-`video_zoom` at 429×239 per cell renders the burned-in subtitles **readably**; the 16-cell overview
-at 261×145 does not.
+On the same 96–128 s window of a talking-head video, `video_zoom` at 429×239 per cell renders the
+burned-in subtitles **readably**; the 16-cell overview at 261×145 does not.
 
 Zoom is opt-in — it only costs the extra image when the model actually asks for one.
 

@@ -152,7 +152,6 @@ node bin/storyboard.mjs film.mp4 --batch 300 --out film.png
 
 - `minGap: 0.4` —— 把最小间隔从默认 1.2 秒压到 0.4，**半秒的镜头也各得一格**
 - `cells: 4~6` —— 少格大图，字幕、人脸、画面里的字都能读
-- `layout: 'strip'` —— 一行的长条，用于"2–4 秒连续动作"（顺序比单帧更重要时）
 
 ### 5. 选帧：比 Laplacian 方差，而不是取中点
 
