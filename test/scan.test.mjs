@@ -54,6 +54,17 @@ test('scorePair: 红→绿只差色相 85 → 85/3', () => {
   assert.ok(near(scorePair(frameToHsv(px(255, 0, 0)), frameToHsv(px(0, 255, 0))), 85 / 3, 1e-4));
 });
 
+test('scorePair: 色相跨 0° 时按环形算（红色→品红不该算成巨变）', () => {
+  // 0° 与 359°（255 刻度里是 0 与 254）只差 1，不该被当成差 254
+  const one = (r, g, b) => frameToHsv(new Uint8Array([r, g, b]));
+  const red = one(255, 0, 0);
+  const wrap = scorePair(red, one(255, 0, 6));       // 极靠近 0° 的另一侧
+  const across = scorePair(red, one(0, 0, 255));     // 240°，真实的远距离
+  assert.ok(wrap < 2, `跨 0° 的分数应该很小，实得 ${wrap}`);
+  // 红(0°) → 蓝(240°)：环形最短路径是 120°，折算 85/255 → 85/3 ≈ 28.3
+  assert.ok(across > 20, `真正的远色相应该明显更大，实得 ${across}`);
+});
+
 test('scorePair: 同亮度换色是 ffmpeg 的死角，本实现能抓住', () => {
   // teal(15,118,110) → green(21,128,61)：实测亮度差 0.8%，色相差 24/255
   const a = frameToHsv(new Uint8Array([15, 118, 110]));

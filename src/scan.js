@@ -71,7 +71,12 @@ export function scorePair(prev, cur) {
   if (prev.length !== cur.length) throw new RangeError('frames must have the same length');
   let sum = 0;
   for (let i = 0; i < cur.length; i += 3) {
-    sum += Math.abs(cur[i] - prev[i]) * HUE_WEIGHT
+    // 色相是**环形**的：0° 和 359° 只差 1°，但直接相减会算成 359。
+    // 不做这一步，红色渐变到品红（跨越 0°）会被判成一次巨大的"画面变化"，
+    // 于是夜景霓虹、日落、色轮转场这些地方会凭空多出切点。
+    const dh = Math.abs(cur[i] - prev[i]);
+    const hueDiff = Math.min(dh, 255 - dh);
+    sum += hueDiff * HUE_WEIGHT
       + Math.abs(cur[i + 1] - prev[i + 1]) * SAT_WEIGHT
       + Math.abs(cur[i + 2] - prev[i + 2]) * VAL_WEIGHT;
   }

@@ -40,6 +40,11 @@ previous conclusion cannot leak into a new conversation as if it were evidence.
   `cut count unreliable here … do not quote cuts=N as pacing`. Better to admit the number is meaningless
   than to let a model build a story on it.
 
+**Hue is now compared circularly.** `scorePair` did `Math.abs(h1 - h2)` on a 0–255 hue axis, so 0° and
+359° — one degree apart — scored as 254 apart. Any shot crossing the red/magenta boundary (neon, sunset,
+a colour-wheel transition) therefore produced a phantom cut. Measured effect: **42 → 40 cuts** on the
+concept PV and **141 → 139** on the talking head. Small, but it was two false cuts per clip for free.
+
 `video_probe` also offers the STRUCTURE/SEQUENCE menu from 8 minutes instead of 20 — a 10-minute video
 benefits from the choice as much as a feature film does.
 
