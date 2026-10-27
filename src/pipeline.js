@@ -8,7 +8,7 @@
 import { probeVideo, DEFAULT_FFMPEG, DEFAULT_FFPROBE } from './probe.js';
 import { scanShots } from './scan.js';
 import { fitSegments, segmentsFromCuts, totalDur } from './segments.js';
-import { MAX_STRIP_ASPECT, bestLayout, groupByCount, suggest } from './plan.js';
+import { bestLayout, groupByCount, suggest } from './plan.js';
 import { findBursts, planCellRanges } from './density.js';
 import { analyzeAudio, describeAudio, detectOnsets } from './audio.js';
 import {
@@ -55,7 +55,6 @@ export async function runStoryboard(opts) {
     asrMaxChunk = 45,
     cache = true,
     textOnly = false,
-    layout = 'auto',
     precomputed = null,
     badgeRatio = 0.15,
     budget = 640_000,
@@ -152,6 +151,11 @@ export async function runStoryboard(opts) {
   } else if (transcript !== 'off' && !info.hasAudio) {
     transcriptInfo = { segments: [], source: 'no-audio' };
   }
+  // 一致性检查：台词落在"被判静音"的区间里 = 两种可能，轻声被吞了，或者 ASR 编的。
+  const textInSilence = transcriptInfo?.source === 'asr'
+    ? countTextInSilence(transcriptInfo.segments, silences)
+    : 0;
+
   const relSegments = (transcriptInfo?.segments ?? [])
     .map((seg) => ({ ...seg, from: seg.from - winStart, to: seg.to - winStart }))
     .filter((seg) => seg.to > 0 && seg.from < winDur);
@@ -249,14 +253,7 @@ export async function runStoryboard(opts) {
   let index = 0;
   for (const [si, group] of groups.entries()) {
     if (group.length === 0) continue;
-    // 长条（1×N）只在"短窗口"里用：宽高比一旦超过 12:1，很多视觉编码器会按最长边缩放，
-    // 每格只剩一百多像素宽，反而不如宫格。超了就退回宫格并在清单里说明。
-    const strip = layout === 'strip';
-    const stripAspect = group.length * info.aspect;
-    const useStrip = strip && stripAspect <= MAX_STRIP_ASPECT;
-    const { cols, rows } = useStrip
-      ? { cols: Math.max(1, group.length), rows: 1 }
-      : bestLayout(Math.max(1, group.length), info.aspect);
+    const { cols, rows } = bestLayout(Math.max(1, group.length), info.aspect);
     // 有音频带时先扣掉条带占用的预算：layoutCanvas 与 composeSheet 必须用**同一个** budget，
     // 否则取帧尺寸和拼图尺寸不一致，图会变成斜条纹（踩过）
     const cellBudget = stripAudio ? Math.round(budget * 0.9) : budget;
@@ -301,7 +298,6 @@ export async function runStoryboard(opts) {
     }
     out.push({
       sheet: si + 1, cols, rows, cellW, cellH,
-      layout: useStrip ? 'strip' : 'grid',
       width: sheet.width, height: sheet.height, buffer: sheet.buffer, cells: cellMeta,
       ...(sheet.stripH ? { stripH: sheet.stripH } : {}),
       ...(encode ? { png: await encodePngBuffer(sheet.buffer, sheet.width, sheet.height, { ffmpegPath }) } : {}),
@@ -335,6 +331,7 @@ export async function runStoryboard(opts) {
           suspect: transcriptInfo.suspect, suspectDetail: transcriptInfo.suspectDetail,
         } : {}),
         ...(transcriptInfo.termsFixed ? { termsFixed: transcriptInfo.termsFixed } : {}),
+        ...(textInSilence ? { textInSilence } : {}),
         ...(transcriptInfo.error ? { error: transcriptInfo.error } : {}) }
       : null,
     plan: {
@@ -371,6 +368,32 @@ const tc = (t) => {
  * 给模型的文本块：可寻址的格位表。
  * 编号同时给"序号"和"行列"，任一读不出来还能靠另一个定位。
  */
+/**
+ * 数一下有多少句台词落在"被判静音"的区间里。
+ *
+ * 两种成因都值得知道：**轻声说话被 -40 dB 阈值吞了**，或者 **ASR 在静音段编了字**。
+ * 纯内存比较（句子数 × 静音段数，实测 222 × 11 ≈ 2400 次），不额外跑 ffmpeg，<1ms。
+ *
+ * @param {Array<{from:number,to:number}>} segments
+ * @param {Array<{from:number,to:number}>} silences
+ * @param {number} ratio 句子有多大比例压在静音里才算（默认 0.6）
+ */
+export function countTextInSilence(segments, silences, ratio = 0.6) {
+  if (!segments?.length || !silences?.length) return 0;
+  let n = 0;
+  for (const seg of segments) {
+    const dur = Math.max(0.01, seg.to - seg.from);
+    let overlap = 0;
+    for (const gap of silences) {
+      const a = Math.max(seg.from, gap.from);
+      const b = Math.min(seg.to, gap.to);
+      if (b > a) overlap += b - a;
+    }
+    if (overlap / dur > ratio) n += 1;
+  }
+  return n;
+}
+
 /**
  * video_probe 的文本：容器信息 + 一个"该怎么读"的建议。
  * 不扫描、不取帧，只花 ffprobe 的时间（几毫秒）。
@@ -563,6 +586,10 @@ export function formatManifest(result, {
       'misheard — cross-check against on-screen text before quoting them.');
     if (result.transcript.termsFixed > 0) {
       lines.push(`${result.transcript.termsFixed} term(s) corrected by the local dictionary (DSH_ASR_TERMS / asr.json "terms")`);
+    }
+    if (result.transcript.textInSilence > 0) {
+      lines.push(`${result.transcript.textInSilence} line(s) of text sit inside a detected silence — ` +
+        'either the speech is below the -40 dB gate, or the ASR invented it');
     }
     if (result.transcript.suspect > 0) {
       const detail = (result.transcript.suspectDetail ?? [])

@@ -14,13 +14,6 @@ export const IMAGE_TOKEN_CAP = 384;
 export const MIN_CELL_W = 240;
 export const MIN_CELL_H = 135;
 export const MAX_SHEETS = 4;
-/**
- * 长条（1×N）的宽高比上限：超过 8:1 就退回宫格。
- *
- * 收紧到 8:1 的理由：**同样格数下，宫格的画布比例更正常**，编码器不会因为"太长"而按最长边缩放，
- * 每格反而更大。长条只在"很短的一段连续动作"（≤4 格、16:9 源）里才有意义。
- */
-export const MAX_STRIP_ASPECT = 8;
 export const DEFAULT_ASPECT = 16 / 9;
 
 /** 画布比例 = (cols / rows) × 源比例。方形宫格才会还原源比例。 */

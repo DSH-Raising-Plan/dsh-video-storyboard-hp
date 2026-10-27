@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DETAIL_CHARS, formatManifest, truncateAtSentence } from '../src/pipeline.js';
+import { DETAIL_CHARS, countTextInSilence, formatManifest, truncateAtSentence } from '../src/pipeline.js';
 
 /** 造一个 64 格的 result（每格 300 字），不跑 ffmpeg */
 function makeResult({ cells = 64, textLen = 300 } = {}) {
@@ -152,4 +152,29 @@ test('formatManifest: 切点太多时不列（总览只给密度）', () => {
   r.window = { from: 0, to: 100, duration: 100 };
   const text = formatManifest(r, { maxChars: 200_000 });
   assert.ok(!/cut points/.test(text), '40 个切点不该逐条列出');
+});
+
+/* ---------------------------------------------------------------- 台词/静音一致性 */
+
+test('countTextInSilence: 整句压在静音里才算', () => {
+  const silences = [{ from: 10, to: 14 }];
+  const segs = [
+    { from: 10.2, to: 13.5 },     // 几乎全在静音里 → 算
+    { from: 13.0, to: 15.0 },     // 只有 50% → 不算
+    { from: 20, to: 22 },         // 完全在外面 → 不算
+  ];
+  assert.equal(countTextInSilence(segs, silences), 1);
+});
+
+test('countTextInSilence: 没有静音段 / 没有台词都为 0', () => {
+  assert.equal(countTextInSilence([{ from: 1, to: 2 }], []), 0);
+  assert.equal(countTextInSilence([], [{ from: 1, to: 2 }]), 0);
+  assert.equal(countTextInSilence(undefined, undefined), 0);
+});
+
+test('formatManifest: 有台词压在静音里时给出提示', () => {
+  const r = makeResult({ cells: 4 });
+  r.transcript = { source: 'asr', model: 'fake', segments: 3, textInSilence: 2 };
+  const text = formatManifest(r, { maxChars: 200_000 });
+  assert.match(text, /2 line\(s\) of text sit inside a detected silence/);
 });

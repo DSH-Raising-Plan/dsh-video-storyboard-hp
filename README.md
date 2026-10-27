@@ -301,8 +301,8 @@ Both run the same pipeline; zoom just narrows the window and drops `adaptive`, s
 
 Two extra knobs on `video_zoom`, both aimed at fast-cut montage:
 
-- `minGap: 0.4` — lower the minimum spacing so half-second shots get their own cell instead of being
-  merged into a neighbour. Default is 1.2 s.
+`minGap: 0.4` on `video_zoom` lowers the minimum spacing so half-second shots get their own cell instead of
+being merged into a neighbour (default 1.2 s).
 - `layout: 'strip'` — one row instead of a grid, for a 2–4 s beat where *sequence* matters more than any
   single frame. Silently falls back to a grid when the strip would exceed 12:1. On the same 96–128 s window of a talking-head video:
 `video_zoom` at 429×239 per cell renders the burned-in subtitles **readably**; the 16-cell overview

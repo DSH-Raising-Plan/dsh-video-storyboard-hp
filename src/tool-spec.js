@@ -163,13 +163,6 @@ export function zoomToolSpec() {
         enum: ['auto', 'off'],
         description: 'Include subtitle/ASR text for this window. Default "auto".',
       },
-      layout: {
-        type: 'string',
-        enum: ['auto', 'strip'],
-        description: 'Default "auto" (grid). "strip" lays the cells out in one row — use it for a short ' +
-          'window of continuous motion (a 2-4 s action beat) where reading the frames in sequence matters ' +
-          'more than reading any single frame. Falls back to a grid if the strip would exceed 12:1.',
-      },
       minGap: {
         type: 'number',
         description: 'Minimum spacing between cells in seconds (default 1.2). Lower it to 0.3-0.5 ' +
@@ -283,8 +276,5 @@ export function validateZoomArgs(args) {
     problems.push('cells must be an integer 1..9');
   }
   if (args.minGap !== undefined && !(args.minGap >= 0)) problems.push('minGap must be >= 0');
-  if (args.layout !== undefined && !['auto', 'strip'].includes(args.layout)) {
-    problems.push("layout must be 'auto' or 'strip'");
-  }
   return problems;
 }

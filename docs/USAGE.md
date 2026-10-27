@@ -141,7 +141,6 @@ Returns duration / resolution / fps / rotation / audio / subtitles **and two rea
 |---|---|---|
 | `input` / `from` / `to` | required | shorter window → larger cells |
 | `cells` | 6 | 1–9; 3–4 for subtitles and faces |
-| `layout` | `auto` | `strip` = one row, only for ≤4 cells of continuous motion (falls back above 8:1) |
 | `minGap` | 1.2 | 0.3–0.4 to stop short shots being merged |
 
 ---

@@ -44,6 +44,14 @@ the old hard cut at the same budget.
 **Speed.** `--batch` reuses one full scan across windows (17.0 s → 9.0 s on a 92 s clip); `video_zoom`
 takes `minGap` and `layout: 'strip'`; audio strip height is capped by cell height.
 
+**Removed `layout: 'strip'`.** It was never worth its surface area: at equal cell count a grid canvas has a
+normal aspect ratio, so the cells are *bigger*, and the burned indices already settle the reading order. One
+fewer parameter to explain.
+
+**Transcript vs silence consistency.** A line that sits (>60 %) inside a detected silence is counted and
+reported: either the speech is below the −40 dB gate, or the ASR invented it. Pure in-memory comparison —
+measured **0.009 ms** for 222 lines × 11 gaps, no extra ffmpeg call.
+
 **Cut points are listed when they fit.** A window with ≤ 24 cuts now prints
 `cut points (3): 00:12.75, 00:16.13, 00:44.50` — exact times, because the strip can only be read to
 ±2–4 s. Busy windows still get counts only, so an overview does not pay for a 141-entry list.

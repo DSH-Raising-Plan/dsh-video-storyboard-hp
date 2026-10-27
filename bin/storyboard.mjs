@@ -21,7 +21,7 @@ const opt = parse(process.argv.slice(2), {
   cells: 0, sheets: 0, from: 0, to: 0, threshold: 'auto', 'min-gap': 1.2,
   pick: 'sharp', burn: 'index', badge: 0.15, transcript: 'auto',
   out: 'storyboard.png', manifest: null, plan: 0, 'text-only': false, 'cell-range': null,
-  batch: 0, layout: 'auto', detail: 'med',
+  batch: 0, detail: 'med',
 });
 const input = opt._[0];
 if (!input) {
@@ -118,7 +118,6 @@ const r = await runStoryboard({
   transcript: String(opt.transcript),
   adaptive,
   textOnly,
-  layout: String(opt.layout),
 });
 
 console.log(`[probe] ${info.width}x${info.height} ${info.fps.toFixed(2)}fps ${info.duration.toFixed(2)}s` +
