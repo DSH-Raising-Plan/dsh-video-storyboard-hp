@@ -1,6 +1,9 @@
 # Changelog
 
-## [0.3.0] — 2026-10-27
+## [0.2.1] — 2026-10-27
+
+Everything since 0.2.0, as one patch release (the whole set is polish and a few parameters, no
+architectural change).
 
 **"How fast is this cut?" is now a number in the text, not something the model has to count.**
 
@@ -31,7 +34,17 @@ Measured on a 9-cell run: `low` 1,521 chars · `med` 1,915 · `high` 3,031. Note
 than the old hard-cut 120 (2,171) even though the budget is the same, because stopping at the last
 sentence end usually costs fewer characters than filling the quota.
 
-Tests 174 → 183.
+**`detail: low|med|high`** — transcript budget per cell (60/120/400), and truncation lands on a
+sentence boundary. Measured on 9 cells: 1,521 / 1,915 / 3,031 characters — `med` is 12 % cheaper than
+the old hard cut at the same budget.
+
+**Read order is explicit.** `video_probe` offers STRUCTURE (overview, spoils the ending) and SEQUENCE
+(window by window, never looks ahead) and refuses to choose.
+
+**Speed.** `--batch` reuses one full scan across windows (17.0 s → 9.0 s on a 92 s clip); `video_zoom`
+takes `minGap` and `layout: 'strip'`; audio strip height is capped by cell height.
+
+Tests 174 → **183**.
 
 ## [0.2.0] — 2026-10-27
 
