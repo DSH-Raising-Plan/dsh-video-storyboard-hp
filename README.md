@@ -33,6 +33,20 @@ Eight decisions, each made because the obvious alternative failed on real footag
 | 7 | **Audio envelope on the same axis**, inside the same image | A separate audio image costs another 384 tokens and loses the alignment, which is the entire point | `src/audio.js`, `src/sheet.js` |
 | 8 | **ASR chunked to ≤45 s at silence midpoints**, non-speech segments filtered and reported | One 299 s request shifted every timestamp **13 s early**; a music-only PV produced a fake 29 s line that landed in 5 cells | `src/asr.js`, `src/pipeline.js` |
 
+### The two-stage read, and what a long film actually costs
+
+A 2 h 35 m film is **not** 24 images up front (9,216 tokens). The cheap path is:
+
+| stage | cost | what you learn |
+|---|---|---|
+| `video_probe` | **0** | length, audio/subtitle tracks, how to read it |
+| one overview (16 cells over the whole file) | 384 | structure — which 7.5-minute stretch is worth opening |
+| open the 2–3 suspicious stretches | 3 × 384 | 16 cells of detail each |
+| total | **1,536** | same price as four images, but the first 384 already tells you whether to continue |
+
+The saving is not in shrinking any single image — it is in **letting the model stop early**. That is why
+`video_probe` returns a plan rather than a picture, and why `textOnly` paging exists.
+
 Prior art, accuracy ceilings we do not try to beat, and the things we deliberately left out:
 **[docs/REFERENCES.md](docs/REFERENCES.md)**.
 
