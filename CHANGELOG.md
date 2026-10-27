@@ -44,7 +44,16 @@ the old hard cut at the same budget.
 **Speed.** `--batch` reuses one full scan across windows (17.0 s → 9.0 s on a 92 s clip); `video_zoom`
 takes `minGap` and `layout: 'strip'`; audio strip height is capped by cell height.
 
-Tests 174 → **183**.
+**Cut points are listed when they fit.** A window with ≤ 24 cuts now prints
+`cut points (3): 00:12.75, 00:16.13, 00:44.50` — exact times, because the strip can only be read to
+±2–4 s. Busy windows still get counts only, so an overview does not pay for a 141-entry list.
+
+**Silence now wins the strip.** A silence column had a teal bar whenever the material was quiet overall
+(silencedetect uses an absolute −40 dB threshold; the bars are normalised against p10–p97, so a −45 dB
+"silence" could still render at 15 % height). Bars are now skipped inside silence, so the legend holds:
+grey means silent.
+
+Tests 174 → **186**.
 
 ## [0.2.0] — 2026-10-27
 

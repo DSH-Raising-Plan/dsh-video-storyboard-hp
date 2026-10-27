@@ -516,7 +516,13 @@ export function formatManifest(result, {
   ];
   if (result.audio) {
     lines.push('footer strip shares the timeline: teal bars = loudness (taller = louder), ' +
-      'dark blocks = silence, yellow ticks = cut points.');
+      'grey blocks = silence, yellow ticks = cut points.');
+  }
+  // 切点不多时直接列出精确时间：条带只能读个 ±2~4 秒的大概，而这一行是 0.01 秒的准确值。
+  // 多于 24 个就不列（总览只需要知道"多密"，精确值留给 zoom）。
+  const inWin = (result.cuts ?? []).filter((c) => c.t >= win.from && c.t <= win.to);
+  if (inWin.length > 0 && inWin.length <= 24) {
+    lines.push(`cut points (${inWin.length}): ${inWin.map((c) => tc(c.t)).join(', ')}`);
   }
   // 声音事件只写"稀疏"的片子：口播片几十次起伏会把真正重要的信息淹掉
   if (result.audio?.events?.length && result.audio.events.length <= 20) {

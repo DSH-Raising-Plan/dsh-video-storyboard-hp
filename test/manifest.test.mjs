@@ -135,3 +135,21 @@ test('detail 三档：越小越省，且都从格边界截', () => {
   assert.ok(variants[1].len < variants[2].len, 'med 应比 high 短');
   for (const { k, len } of variants) assert.ok(len > 0, `${k} 不该为空`);
 });
+
+/* ---------------------------------------------------------------- 切点列表 */
+
+test('formatManifest: 切点 ≤24 时列出精确时间', () => {
+  const r = makeResult({ cells: 16 });
+  r.cuts = [{ t: 12.75 }, { t: 16.13 }, { t: 44.5 }];
+  r.window = { from: 0, to: 100, duration: 100 };
+  const text = formatManifest(r, { maxChars: 200_000 });
+  assert.match(text, /cut points \(3\): 00:12\.75, 00:16\.13, 00:44\.50/);
+});
+
+test('formatManifest: 切点太多时不列（总览只给密度）', () => {
+  const r = makeResult({ cells: 16 });
+  r.cuts = Array.from({ length: 40 }, (_, i) => ({ t: i * 2 }));
+  r.window = { from: 0, to: 100, duration: 100 };
+  const text = formatManifest(r, { maxChars: 200_000 });
+  assert.ok(!/cut points/.test(text), '40 个切点不该逐条列出');
+});

@@ -10,6 +10,7 @@ import {
   BACKGROUND, BADGE_FG, DIGITS, DIGIT_H, DIGIT_W, PAD_FILL,
   badgeScale, composeSheet, drawBadge, drawGlyphs, encodeRaw, extractFrameRaw,
   extractSharpest, fillRect, layoutCanvas, sharpness,
+  STRIP_BAR, addAudioStrip,
 } from '../src/sheet.js';
 import { DEFAULT_FFMPEG, probeVideo } from '../src/probe.js';
 
@@ -307,4 +308,37 @@ test('e2e: thumb 模式返回段内的真实时刻，而不是段起点', async 
   });
   assert.equal(frame.buffer.length, cellW * cellH * 3);
   assert.ok(frame.t >= 0.6 && frame.t <= 1.0, `thumb 时刻应在段内，实得 ${frame.t}`);
+});
+
+/* ---------------------------------------------------------------- 音频条带 */
+
+test('addAudioStrip: 静音列里不许出现响度柱（灰块说了算）', () => {
+  const width = 100;
+  const height = 40;
+  const stripH = 10;
+  const sheet = { buffer: Buffer.alloc(width * height * 3), width, height };
+  const out = addAudioStrip(sheet, {
+    loudness: { series: Array(200).fill(-20), step: 0.1 },   // 全程恒定 -20 dB
+    silences: [{ from: 2, to: 4 }],                          // 10 秒里 2–4 秒静音
+    cuts: [],
+    window: { from: 0, to: 10 },
+    stripH,
+  });
+  const buf = out.buffer;
+  const bodyH = height;
+  let tealAll = 0;
+  let tealInSilence = 0;
+  for (let x = 0; x < width; x++) {
+    const t = (x / width) * 10;
+    const inSil = t > 2.05 && t < 3.95;
+    for (let y = 0; y < stripH; y++) {
+      const i = ((bodyH + y) * width + x) * 3;
+      if (buf[i] === STRIP_BAR[0] && buf[i + 1] === STRIP_BAR[1] && buf[i + 2] === STRIP_BAR[2]) {
+        tealAll += 1;
+        if (inSil) tealInSilence += 1;
+      }
+    }
+  }
+  assert.ok(tealAll > 0, '静音之外应该有柱子');
+  assert.equal(tealInSilence, 0, '静音段内不该有柱子（之前会被相对归一化漏出来）');
 });
