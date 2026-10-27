@@ -374,46 +374,32 @@ export function formatProbe(info) {
       `audio="${info.hasAudio ? (info.audioCodec ?? 'yes') : 'no'}" ` +
       `subtitles="${info.hasSubtitle ? 'yes' : 'no'}" />`,
   ];
-  const s = suggest({ duration: info.duration, cuts: 0, motion: undefined, aspect: info.aspect });
-  lines.push(`rough plan: ${s.cells} cells x ${s.sheets} image(s) if taken in one go ` +
-    `(this is a duration-only estimate; cut density can change it).`);
+  // 只看时长给个粗估（不调 suggest：probe 没扫描，cuts=0 会被当成"单镜头"，算出 4 格那种假结果）
+  const estCells = Math.min(16, Math.max(4, Math.round(info.duration / 40)));
+  const estSheets = info.duration > 1200 ? Math.min(4, Math.ceil(info.duration / 300))
+    : info.duration > 600 ? 2 : 1;
+  lines.push(`one-shot overview would be about ${estCells} cells x ${estSheets} image(s) ` +
+    '(duration-only estimate; cut density can change it).');
+
+  // 两种读法，**明确标出哪种会剧透**。
+  // 追剧情时不能先看全片总览：一张盖住片尾的图等于把结局摆在你脸上。
   if (mins > 20) {
-    const windows = Math.ceil(mins / 5);
-    lines.push(`this is ${mins.toFixed(0)} min: read it in ~5-minute windows instead of one call — ` +
-      `video_storyboard({ input, from: 0, to: 300 }), then 300-600, ... (${windows} windows). ` +
-      `Scanning the whole file first costs ~${(info.duration / 30).toFixed(0)} s of CPU.`);
+    lines.push('Two ways to read this, pick by what you need:');
+    lines.push(`  • STRUCTURE (spoils the ending): one wide pass — ` +
+      `video_storyboard({ input, cells: 16, sheets: 4 }) → whole film in 4 images, ` +
+      `then open the 2-3 sections that look interesting. ~${(info.duration / 30).toFixed(0)} s of CPU.`);
+    lines.push(`  • SEQUENCE (no spoilers, like watching it): ` +
+      `video_storyboard({ input, from: 0, to: 300 }) then 300-600, 600-900 … one window at a time, ` +
+      `never looking ahead. Each window is ~${Math.ceil(mins / 5)} calls in total; ` +
+      'the scan of each window is cached, so re-reading a stretch is free.');
   } else if (mins < 1) {
-    lines.push('under a minute: one call is enough.');
+    lines.push('under a minute: one call is enough, and a single image cannot spoil much.');
+  } else {
+    lines.push('Short enough to read in one call. If you are following a story rather than ' +
+      'analysing structure, prefer `from`/`to` windows so later scenes are not on screen early.');
   }
   if (!info.hasAudio) lines.push('no audio track: transcript will be empty, the grid is visual only.');
   else if (!info.hasSubtitle) lines.push('no subtitle track: transcript (if any) must come from ASR.');
-  return lines.join('\n');
-}
-
-/**
- * 多窗口批处理的汇总表（Markdown）。纯函数，便于测试。
- *
- * 用途：一部 2 小时 35 分的电影要按 5 分钟读，手工敲 24 次 `--from/--to` 不现实。
- * `--batch 300` 跑完所有窗口后，这张表是唯一需要人看的东西——它把 24 张图串成一条时间线。
- *
- * @param {Array<{index:number,from:number,to:number,cells:number,image:string,cuts:number,chars:number}>} rows
- */
-export function formatTimeline(rows, { title = 'batch timeline' } = {}) {
-  const total = rows.reduce((n, r) => n + (r.to - r.from), 0);
-  const totalCells = rows.reduce((n, r) => n + r.cells, 0);
-  const totalChars = rows.reduce((n, r) => n + (r.chars ?? 0), 0);
-  const lines = [
-    `# ${title}`,
-    '',
-    `- windows: **${rows.length}** · total ${tc(total)} · cells ${totalCells} · transcript ${totalChars} chars`,
-    `- tokens: ${rows.length} image(s) ≈ **${rows.length * 384}** (one image per window)`,
-    '',
-    '| # | window | cells | cuts | chars | image |',
-    '|---|---|---|---|---|---|',
-  ];
-  for (const r of rows) {
-    lines.push(`| ${r.index} | ${tc(r.from)}–${tc(r.to)} | ${r.cells} | ${r.cuts} | ${r.chars ?? 0} | \`${r.image}\` |`);
-  }
   return lines.join('\n');
 }
 

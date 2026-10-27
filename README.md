@@ -33,6 +33,20 @@ Eight decisions, each made because the obvious alternative failed on real footag
 | 7 | **Audio envelope on the same axis**, inside the same image | A separate audio image costs another 384 tokens and loses the alignment, which is the entire point | `src/audio.js`, `src/sheet.js` |
 | 8 | **ASR chunked to ≤45 s at silence midpoints**, non-speech segments filtered and reported | One 299 s request shifted every timestamp **13 s early**; a music-only PV produced a fake 29 s line that landed in 5 cells | `src/asr.js`, `src/pipeline.js` |
 
+### Reading order is a choice, and one of them spoils the film
+
+An overview image of a 2 h film puts the last scene on the same screen as the first. That is fine for
+"what is this", and fatal for "what happens next".
+
+| | what it does | when |
+|---|---|---|
+| **STRUCTURE** — `cells: 16, sheets: 4` over the whole file | 4 images, whole arc at once. ~310 s CPU for 2.5 h | analysing, indexing, "is this worth watching" |
+| **SEQUENCE** — `from`/`to` windows of 2–5 min, one at a time | never shows a later scene than the one you asked for | following a plot, suspense, shot-by-shot study |
+
+`video_probe` returns both, labelled, and refuses to pick for you. Nothing in the tool forces a whole-file
+pass: `from`/`to` is the primary interface, and each window's scan is cached so re-reading a stretch after
+the first pass costs nothing.
+
 ### The two-stage read, and what a long film actually costs
 
 A 2 h 35 m film is **not** 24 images up front (9,216 tokens). The cheap path is:
