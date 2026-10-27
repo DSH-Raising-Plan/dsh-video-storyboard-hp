@@ -353,6 +353,33 @@ export function formatProbe(info) {
 }
 
 /**
+ * 多窗口批处理的汇总表（Markdown）。纯函数，便于测试。
+ *
+ * 用途：一部 2 小时 35 分的电影要按 5 分钟读，手工敲 24 次 `--from/--to` 不现实。
+ * `--batch 300` 跑完所有窗口后，这张表是唯一需要人看的东西——它把 24 张图串成一条时间线。
+ *
+ * @param {Array<{index:number,from:number,to:number,cells:number,image:string,cuts:number,chars:number}>} rows
+ */
+export function formatTimeline(rows, { title = 'batch timeline' } = {}) {
+  const total = rows.reduce((n, r) => n + (r.to - r.from), 0);
+  const totalCells = rows.reduce((n, r) => n + r.cells, 0);
+  const totalChars = rows.reduce((n, r) => n + (r.chars ?? 0), 0);
+  const lines = [
+    `# ${title}`,
+    '',
+    `- windows: **${rows.length}** · total ${tc(total)} · cells ${totalCells} · transcript ${totalChars} chars`,
+    `- tokens: ${rows.length} image(s) ≈ **${rows.length * 384}** (one image per window)`,
+    '',
+    '| # | window | cells | cuts | chars | image |',
+    '|---|---|---|---|---|---|',
+  ];
+  for (const r of rows) {
+    lines.push(`| ${r.index} | ${tc(r.from)}–${tc(r.to)} | ${r.cells} | ${r.cuts} | ${r.chars ?? 0} | \`${r.image}\` |`);
+  }
+  return lines.join('\n');
+}
+
+/**
  * 把结果渲染成给模型看的文本清单。
  *
  * **为什么要有预算**：一部 2 小时 35 分的电影，64 个 cell 的完整清单约 75KB。宿主对单次工具

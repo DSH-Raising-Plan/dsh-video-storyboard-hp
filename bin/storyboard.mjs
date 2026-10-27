@@ -13,12 +13,13 @@ import { writeFile } from 'node:fs/promises';
 import { args as parse } from './_args.mjs';
 import { probeVideo } from '../src/probe.js';
 import { planWindows } from '../src/plan.js';
-import { formatManifest, runStoryboard, saveStoryboards } from '../src/pipeline.js';
+import { formatManifest, formatTimeline, runStoryboard, saveStoryboards } from '../src/pipeline.js';
 
 const opt = parse(process.argv.slice(2), {
   cells: 0, sheets: 0, from: 0, to: 0, threshold: 'auto', 'min-gap': 1.2,
   pick: 'sharp', burn: 'index', badge: 0.15, transcript: 'auto',
   out: 'storyboard.png', manifest: null, plan: 0, 'text-only': false, 'cell-range': null,
+  batch: 0,
 });
 const input = opt._[0];
 if (!input) {
@@ -42,6 +43,39 @@ if (Number(opt.plan) > 0) {
       `(${w.duration.toFixed(0)}s)  ${w.cells} 格 ×${w.images}  ≈${w.approxTokens} tok`);
   }
   console.log('\n逐段跑：node bin/storyboard.mjs <video> --from A --to B');
+  process.exit(0);
+}
+
+// --batch <秒>：把整片按固定步长切成若干窗口，逐个出图，最后写一张时间线表。
+// 一部 2 小时半的电影手工敲 24 次 --from/--to 不现实，这是给长片用的入口。
+const batchStep = Number(opt.batch) || 0;
+if (batchStep > 0) {
+  const planW = planWindows(info.duration, batchStep);
+  const base = String(opt.out).replace(/\.png$/i, '');
+  const rows = [];
+  const t0 = Date.now();
+  for (const w of planW.windows) {
+    const r = await runStoryboard({
+      input, from: w.from, to: w.to, cells: 0, sheets: 0,
+      threshold: opt.threshold === 'auto' ? 'auto' : Number(opt.threshold),
+      pick: String(opt.pick), burn: String(opt.burn), transcript: String(opt.transcript),
+    });
+    const image = `${base}-w${String(w.index).padStart(2, '0')}.png`;
+    await saveStoryboards(r, image, { quality: 4 });
+    const cells = r.sheets.flatMap((sh) => sh.cells);
+    rows.push({
+      index: w.index, from: w.from, to: w.to,
+      cells: cells.length, cuts: r.cuts.length,
+      chars: r.transcript?.chars ?? 0, image,
+    });
+    console.log(`[batch] ${w.index}/${planW.total}  ${w.from.toFixed(0)}–${w.to.toFixed(0)}s  ` +
+      `${cells.length} 格  → ${image}  (${Date.now() - t0}ms)`);
+  }
+  const md = formatTimeline(rows, { title: `${info.path ?? input} — ${planW.total} windows @ ${batchStep}s` });
+  const mdPath = `${base}-timeline.md`;
+  await writeFile(mdPath, `${md}\n`, 'utf8');
+  console.log(`\n${md}`);
+  console.log(`[batch] 汇总写入 ${mdPath}  总耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   process.exit(0);
 }
 

@@ -320,3 +320,20 @@ test('suggest: 没有响度信息时不做音乐判断（保持原行为）', ()
   const r = suggest({ duration: 300, cuts: 40, motion: 10 });
   assert.ok(!/音乐驱动/.test(r.reason));
 });
+
+/* ---------------------------------------------------------------- 窗口规划 */
+
+test('planWindows: 尾巴太短时并进前一个窗口（不再出现 2 秒的窗）', () => {
+  const p = planWindows(92.18, 30, { maxWindows: 99 });
+  assert.ok(p.windows.every((w) => w.duration >= 30), `不该出现过短的窗：${JSON.stringify(p.windows.map(w=>w.duration))}`);
+  assert.equal(p.windows.at(-1).to, 92.18, '最后一个窗口必须覆盖到片尾');
+  assert.equal(p.covered, 92.18, '总覆盖等于总时长');
+});
+
+test('planWindows: 10 秒尾巴被并掉，50 秒尾巴保留', () => {
+  const short = planWindows(100, 30, { maxWindows: 99 });     // 尾巴 10s < 30 → 并
+  assert.deepEqual(short.windows.map((w) => w.duration), [30, 30, 40]);
+  const long = planWindows(650, 300);                          // 尾巴 50s ≥ 30 → 保留
+  assert.equal(long.windows.length, 3);
+  assert.deepEqual(long.windows.map((w) => w.duration), [300, 300, 50]);
+});

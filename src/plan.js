@@ -231,10 +231,18 @@ export function planWindows(duration, step = 300, { cells, maxWindows = 12 } = {
     stepAdjusted = true;
   }
   total = Math.max(1, total);
+  // 尾巴短于 30 秒就并进前一个窗口：92s 按 30s 切会剩一个 2.18s 的窗口，只够 1 格，
+  // 白白多花 384 token 换一张几乎没信息的图。用绝对阈值（而不是按比例），
+  // 这样 650s/300s 那种 50s 的尾巴不会被无谓地并掉。
+  if (total > 1) {
+    const tail = duration - (total - 1) * span;
+    if (tail < 30) total -= 1;
+  }
   const windows = [];
   for (let i = 0; i < total; i++) {
     const from = +(i * span).toFixed(2);
-    const to = +Math.min(duration, from + span).toFixed(2);
+    // 最后一个窗口吸收剩下的全部（含被并掉的尾巴）
+    const to = i === total - 1 ? +duration.toFixed(2) : +Math.min(duration, from + span).toFixed(2);
     const len = to - from;
     const n = cells ?? snapCells(Math.max(4, Math.round(len / 20)));
     const images = 1;
