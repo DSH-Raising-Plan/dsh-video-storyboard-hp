@@ -16,6 +16,14 @@
 - Audio strip height is capped by cell height, so a 2476 px-wide strip layout no longer gets a 136 px
   footer eating 37 % of the image.
 
+**Text index diet.** Measured on a 9-cell run: 2,892 → **2,171 characters (-25 %)**, with no
+information lost that the model can actually use.
+
+- per-cell transcript cap 180 → 120 chars (page with `cellRange` if you need the rest)
+- `sharp 479.7` removed from the text index — a bare number the model cannot interpret; still in the JSON
+  manifest
+- `image 1` dropped when there is only one sheet (it is pure redundancy); kept for multi-sheet
+
 Tests 174 → 176.
 
 ## [0.2.0] — 2026-10-27

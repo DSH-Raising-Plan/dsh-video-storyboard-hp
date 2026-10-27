@@ -56,6 +56,7 @@ export async function runStoryboard(opts) {
     cache = true,
     textOnly = false,
     layout = 'auto',
+    precomputed = null,
     badgeRatio = 0.15,
     budget = 640_000,
     encode = true,
@@ -74,11 +75,21 @@ export async function runStoryboard(opts) {
 
   // 扫描结果按 (文件, 窗口, 阈值策略) 缓存：storyboard 之后的 zoom 能直接复用
   const key = cache ? await cacheKey({ input, start: winStart, end: winStart + winDur, threshold }) : null;
-  const scan = await withCache(key, () => scanShots({
-    input, fps: info.fps, threshold, start: winStart, end: winStart + winDur,
-    ffmpegPath, onProgress,
-  }), { enabled: cache });
-  if (cache && !scan.cached) await pruneCache();
+  // precomputed：批量模式下全片已经扫过一次，窗口直接复用那份切点与摘要，
+  // 不再为每个窗口重新解码一遍（2 小时的片子能省掉 24 次重复扫描）。
+  const scan = precomputed
+    ? {
+      cuts: (precomputed.cuts ?? []).filter((c) => c.t >= winStart && c.t < winStart + winDur),
+      summary: precomputed.summary ?? { frames: 0, p90: 0, p99: 0 },
+      threshold: precomputed.threshold ?? threshold,
+      cached: false,
+      reused: true,
+    }
+    : await withCache(key, () => scanShots({
+      input, fps: info.fps, threshold, start: winStart, end: winStart + winDur,
+      ffmpegPath, onProgress,
+    }), { enabled: cache });
+  if (cache && !scan.cached && !precomputed) await pruneCache();
 
   // ---- 音频测量（零模型：响度 + 静音）。先做，因为静音位置要用来切 ASR 请求。
   const needAudio = info.hasAudio && !textOnly && (audioStrip !== false || transcript !== 'off');
@@ -374,16 +385,15 @@ export function formatProbe(info) {
       `audio="${info.hasAudio ? (info.audioCodec ?? 'yes') : 'no'}" ` +
       `subtitles="${info.hasSubtitle ? 'yes' : 'no'}" />`,
   ];
-  // 只看时长给个粗估（不调 suggest：probe 没扫描，cuts=0 会被当成"单镜头"，算出 4 格那种假结果）
-  const estCells = Math.min(16, Math.max(4, Math.round(info.duration / 40)));
-  const estSheets = info.duration > 1200 ? Math.min(4, Math.ceil(info.duration / 300))
-    : info.duration > 600 ? 2 : 1;
-  lines.push(`one-shot overview would be about ${estCells} cells x ${estSheets} image(s) ` +
-    '(duration-only estimate; cut density can change it).');
-
   // 两种读法，**明确标出哪种会剧透**。
   // 追剧情时不能先看全片总览：一张盖住片尾的图等于把结局摆在你脸上。
+  // 短片不铺这些：一句话能说完的片子，给一条建议就够，别用通用模板灌水。
   if (mins > 20) {
+    // 只看时长给个粗估（不调 suggest：probe 没扫描，cuts=0 会被当成"单镜头"，算出 4 格那种假结果）
+    const estCells = Math.min(16, Math.max(4, Math.round(info.duration / 40)));
+    const estSheets = Math.min(4, Math.ceil(info.duration / 300));
+    lines.push(`one-shot overview would be about ${estCells} cells x ${estSheets} image(s) ` +
+      '(duration-only estimate; cut density can change it).');
     lines.push('Two ways to read this, pick by what you need:');
     lines.push(`  • STRUCTURE (spoils the ending): one wide pass — ` +
       `video_storyboard({ input, cells: 16, sheets: 4 }) → whole film in 4 images, ` +
@@ -393,13 +403,38 @@ export function formatProbe(info) {
       `never looking ahead. Each window is ~${Math.ceil(mins / 5)} calls in total; ` +
       'the scan of each window is cached, so re-reading a stretch is free.');
   } else if (mins < 1) {
-    lines.push('under a minute: one call is enough, and a single image cannot spoil much.');
+    lines.push(`under a minute (${info.duration.toFixed(0)}s): one call is enough.`);
   } else {
-    lines.push('Short enough to read in one call. If you are following a story rather than ' +
-      'analysing structure, prefer `from`/`to` windows so later scenes are not on screen early.');
+    lines.push(`Short (${mins.toFixed(0)} min): one call is enough. Following a story rather than ` +
+      'analysing structure? Use `from`/`to` windows so later scenes are not on screen early.');
   }
   if (!info.hasAudio) lines.push('no audio track: transcript will be empty, the grid is visual only.');
   else if (!info.hasSubtitle) lines.push('no subtitle track: transcript (if any) must come from ASR.');
+  return lines.join('\n');
+}
+
+/**
+ * 多窗口批处理的汇总表（Markdown）。
+ *
+ * 一部 2 小时半的电影按 5 分钟读 = 24 个窗口，人只需要看这一张表：
+ * 它把 24 张图串成一条时间线。
+ */
+export function formatTimeline(rows, { title = 'batch timeline' } = {}) {
+  const total = rows.reduce((n, r) => n + (r.to - r.from), 0);
+  const totalCells = rows.reduce((n, r) => n + r.cells, 0);
+  const totalChars = rows.reduce((n, r) => n + (r.chars ?? 0), 0);
+  const lines = [
+    `# ${title}`,
+    '',
+    `- windows: **${rows.length}** · total ${tc(total)} · cells ${totalCells} · transcript ${totalChars} chars`,
+    `- tokens: ${rows.length} image(s) ≈ **${rows.length * 384}** (one image per window)`,
+    '',
+    '| # | window | cells | cuts | chars | image |',
+    '|---|---|---|---|---|---|',
+  ];
+  for (const r of rows) {
+    lines.push(`| ${r.index} | ${tc(r.from)}–${tc(r.to)} | ${r.cells} | ${r.cuts} | ${r.chars ?? 0} | \`${r.image}\` |`);
+  }
   return lines.join('\n');
 }
 
@@ -418,7 +453,7 @@ export function formatProbe(info) {
  * @param {{maxCellChars?:number, maxChars?:number, cellRange?:[number,number]}} opts
  */
 export function formatManifest(result, {
-  maxCellChars = 180, maxChars = 24_000, cellRange = null,
+  maxCellChars = 120, maxChars = 24_000, cellRange = null,
 } = {}) {
   const { info, window: win, plan } = result;
   const hasSheets = Boolean(result.sheets?.length);
@@ -470,13 +505,16 @@ export function formatManifest(result, {
   let stoppedAt = null;
   for (const c of picked) {
     const pos = (c.i - 1) % plan.cells;
+    // 单图时 "image 1" 是纯冗余（64 格能省 500 字符）；多图时必须保留
     const where = typeof c.cols === 'number'
-      ? ` (r${Math.floor(pos / c.cols) + 1}c${(pos % c.cols) + 1}, image ${c.sheet})` : '';
+      ? ` (r${Math.floor(pos / c.cols) + 1}c${(pos % c.cols) + 1}` +
+        `${result.sheets.length > 1 ? `, image ${c.sheet}` : ''})`
+      : '';
     let text = String(c.text ?? '');
     if (text.length > maxCellChars) text = `${text.slice(0, maxCellChars).trimEnd()}…`;
+    // sharp 只留在 JSON 清单里：给模型一个 "479.7" 它无法判断好坏，纯占字符
     const head = `cell ${c.i}${where} = ${tc(c.t_start)}-${tc(c.t_end)}` +
-      (c.cuts ? `  cuts ${c.cuts}` : '') +
-      (c.sharp !== undefined ? `  sharp ${c.sharp}` : '');
+      (c.cuts ? `  cuts ${c.cuts}` : '');
     const body = text ? `${head}\n    "${text}"` : head;
     if (used + body.length + 1 > maxChars) { stoppedAt = c.i - 1; break; }
     lines.push(body);

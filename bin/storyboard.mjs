@@ -53,12 +53,14 @@ if (batchStep > 0) {
   // 先全片扫一遍拿切点，让窗口边界落在剪辑点上（而不是钟表上）。
   // 2 小时片约 25s，相对于几十个窗口的渲染时间可以忽略。
   let boundaries = [];
+  let precomputed = null;
   if (opt.snap !== false) {
     const { scanShots } = await import('../src/scan.js');
     console.log('[batch] 全片扫描切点（用于窗口对齐，可加 --no-snap 跳过）…');
-    const scan = await scanShots({ input, fps: info.fps, threshold: 'auto' });
-    boundaries = scan.cuts.map((c) => c.t);
-    console.log(`[batch] 切点 ${boundaries.length} 个`);
+    // 这一遍的切点也直接喂给每个窗口，省掉"每个窗口各扫一遍"的重复解码
+    precomputed = await scanShots({ input, fps: info.fps, threshold: 'auto' });
+    boundaries = precomputed.cuts.map((c) => c.t);
+    console.log(`[batch] 切点 ${boundaries.length} 个（窗口内复用，不再重复扫描）`);
   }
   const planW = planWindows(info.duration, batchStep, { boundaries });
   if (planW.snapped) console.log(`[batch] ${planW.snapped} 个窗口边界吸附到剪辑点`);
@@ -70,6 +72,7 @@ if (batchStep > 0) {
       input, from: w.from, to: w.to, cells: 0, sheets: 0,
       threshold: opt.threshold === 'auto' ? 'auto' : Number(opt.threshold),
       pick: String(opt.pick), burn: String(opt.burn), transcript: String(opt.transcript),
+      precomputed,
     });
     const image = `${base}-w${String(w.index).padStart(2, '0')}.png`;
     await saveStoryboards(r, image, { quality: 4 });

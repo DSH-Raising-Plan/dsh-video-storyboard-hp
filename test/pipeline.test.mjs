@@ -92,7 +92,8 @@ test('e2e: 时间窗只覆盖窗口内，清单首行写明 window', async (t) =
   }
   const text = formatManifest(r);
   assert.match(text, /window="2\.00-4\.00"/);
-  assert.match(text, /cell 1 \(r1c1, image 1\)/);
+  // 单图时不再写 "image 1"（纯冗余），多图时才带
+  assert.match(text, /cell 1 \(r1c1\)/);
   assert.match(text, /unlabeled cells are padding/);
 });
 
@@ -206,4 +207,40 @@ test('插件接线: apply() 注册一个叫 video_storyboard 的工具', async (
     }
     throw error;
   }
+});
+
+/* ---------------------------------------------------------------- 批量复用扫描 */
+
+test('e2e: 传入 precomputed 时不再自己扫描', async (t) => {
+  if (!hasFfmpeg) return t.skip('ffmpeg not on PATH');
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-pipe-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = await makeFixture(dir);          // 这段测试片本身有切点
+
+  const own = await runStoryboard({ input: file, cells: 4, encode: false });
+  assert.ok(own.cuts.length > 0, '正常扫描应找到切点');
+
+  // 注入一份"窗口外的切点"：如果管线自己又扫了一遍，就会找到真实切点，测试失败
+  const injected = await runStoryboard({
+    input: file, cells: 4, encode: false,
+    precomputed: { cuts: [{ t: 99 }], summary: { frames: 0, p90: 0 }, threshold: 12 },
+  });
+  assert.equal(injected.cuts.length, 0, '应完全采用注入的切点（且已按窗口过滤）');
+});
+
+test('formatProbe: 长片给两种读法并标明剧透，短片不啰嗦', async () => {
+  const { formatProbe } = await import('../src/pipeline.js');
+  const base = {
+    width: 1920, height: 1080, fps: 24, aspect: 16 / 9, rotation: 0,
+    videoCodec: 'h264', container: 'mp4', hasAudio: true, audioCodec: 'aac',
+    hasSubtitle: true, path: 'a.mp4',
+  };
+  const long = formatProbe({ ...base, duration: 9300 });
+  assert.match(long, /STRUCTURE \(spoils the ending\)/);
+  assert.match(long, /SEQUENCE \(no spoilers/);
+
+  const short = formatProbe({ ...base, duration: 30 });
+  assert.match(short, /one call is enough/);
+  assert.ok(!/STRUCTURE/.test(short), '短片不该出现长片模板');
+  assert.ok(short.split('\n').length <= 3, `短片文本应很短，实得 ${short.split('\n').length} 行`);
 });
