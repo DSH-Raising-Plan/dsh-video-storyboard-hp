@@ -125,12 +125,22 @@ export function findBursts(cuts, duration, { window = RATE_WINDOW, max = MAX_DEN
  */
 export function planCellRanges({
   duration, cuts = [], cells, bin = BIN, window = RATE_WINDOW, max = MAX_DENSITY,
-  snap = 2.0, snapRatio = 0.3, minLen = 0.3, speech,
+  snap = 2.0, snapRatio = 0.3, minLen = 0.3, speech, audioEvents = [],
 } = {}) {
   if (!(duration > 0)) throw new RangeError(`duration must be > 0, got ${duration}`);
   if (!Number.isInteger(cells) || cells < 1) throw new RangeError(`cells must be a positive integer, got ${cells}`);
 
   const { density, bins } = densityCurve({ duration, cuts, bin, window, max, speech });
+
+  // 声音事件加权：突然变响/突然安静的地方，画面往往没变但事情发生了，
+  // 给它 ±1 秒的密度加成，让边界往那儿靠（权重保守，1.6 倍，避免盖过画面信号）。
+  for (const e of audioEvents) {
+    const center = Math.round(e.t / bin);
+    const half = Math.round(1.0 / bin);
+    for (let i = Math.max(0, center - half); i < Math.min(bins, center + half); i++) {
+      density[i] = Math.min(max, density[i] * 1.6);
+    }
+  }
   const cum = new Float64Array(bins + 1);
   for (let i = 0; i < bins; i++) cum[i + 1] = cum[i] + density[i] * bin;
   const total = cum[bins] || duration;

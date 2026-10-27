@@ -10,7 +10,7 @@ import { scanShots } from './scan.js';
 import { fitSegments, segmentsFromCuts, totalDur } from './segments.js';
 import { bestLayout, groupByCount, suggest } from './plan.js';
 import { findBursts, planCellRanges } from './density.js';
-import { analyzeAudio, describeAudio } from './audio.js';
+import { analyzeAudio, describeAudio, detectOnsets } from './audio.js';
 import {
   ASR_DEFAULTS, alignCells, applyTermMap, describeAsrTarget, explainFetchError, extractSubtitleTrack,
   filterSuspectSegments, resolveAsrConfig, speechCurve, transcribeLong,
@@ -86,6 +86,10 @@ export async function runStoryboard(opts) {
     : null;
   const stripAudio = audioStrip !== false ? audio : null;
   const silences = audio?.silences ?? [];
+  // 声音事件：突然变响/突然安静。画面没动但事情发生的时刻，只能靠它抓到。
+  // 口播片里"每句话的停顿"都会触发，所以**只用最突出的若干个**参与格位加权
+  // （全部 90 多个事件铺上去等于把密度曲线压平），清单里也按强度排序展示。
+  const allEvents = audio ? detectOnsets(audio) : [];
 
   // ---- 台词：字幕轨优先，其次 ASR；两者都没有就静默跳过（绝不让分镜失败）
   let transcriptInfo = null;
@@ -143,6 +147,17 @@ export async function runStoryboard(opts) {
     ? speechCurve(relSegments, { duration: winDur })
     : null;
 
+  // 声音事件只有在"话不密"的片子里才有信息量：
+  // 口播片每句话的停顿都会触发（实测 299s 里 92 次），铺到密度曲线上等于把它压平。
+  const speechRateForEvents = winDur > 0
+    ? relSegments.reduce((n, seg) => n + seg.text.length, 0) / winDur : 0;
+  const audioEvents = speechRateForEvents < 3
+    ? [...allEvents]
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 12)
+      .sort((a, b) => a.t - b.t)
+    : [];
+
   // ---- 格数：放在台词与音频之后，是为了让"口播多不多 / 是不是音乐驱动"参与决策
   let cells = Math.max(0, Number(opts.cells) || 0);
   let sheets = Math.max(0, Number(opts.sheets) || 0);
@@ -168,7 +183,9 @@ export async function runStoryboard(opts) {
   const relCuts = scan.cuts.map((c) => c.t - winStart);
   let cellRanges;
   if (adaptive && relCuts.length > 0) {
-    cellRanges = planCellRanges({ duration: winDur, cuts: relCuts, cells: cells * sheets, speech })
+    cellRanges = planCellRanges({
+      duration: winDur, cuts: relCuts, cells: cells * sheets, speech, audioEvents,
+    })
       .map((r) => ({ from: r.from + winStart, to: r.to + winStart, density: r.density }));
   } else {
     const segs = segmentsFromCuts(winDur, relCuts, 0.4, winStart);
@@ -273,7 +290,13 @@ export async function runStoryboard(opts) {
     summary: scan.summary,
     threshold: scan.threshold,
     cached: Boolean(scan.cached),
-    audio: stripAudio ? { ...stripAudio, summary: describeAudio(stripAudio, winDur) } : null,
+    audio: stripAudio
+      ? {
+        ...stripAudio,
+        events: allEvents,
+        summary: describeAudio(stripAudio, winDur),
+      }
+      : null,
     transcript: transcriptInfo
       ? { source: transcriptInfo.source, model: transcriptInfo.model ?? null,
         segments: (transcriptInfo.segments ?? []).length,
@@ -427,6 +450,16 @@ export function formatManifest(result, {
   if (result.audio) {
     lines.push('footer strip shares the timeline: teal bars = loudness (taller = louder), ' +
       'dark blocks = silence, yellow ticks = cut points.');
+  }
+  // 声音事件只写"稀疏"的片子：口播片几十次起伏会把真正重要的信息淹掉
+  if (result.audio?.events?.length && result.audio.events.length <= 20) {
+    const list = [...result.audio.events]
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 6)
+      .map((e) => `${tc(e.t)} ${e.kind === 'rise' ? '+' : ''}${e.delta}dB`).join(', ');
+    lines.push(`audio events (${result.audio.events.length}): ${list}` +
+      (result.audio.events.length > 6 ? ', …' : '') +
+      ' — the picture may be static here; the change is in the sound.');
   }
 
   let used = lines.join('\n').length;

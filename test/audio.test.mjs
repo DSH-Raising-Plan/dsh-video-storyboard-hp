@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { analyzeAudio, detectSilence, measureLoudness } from '../src/audio.js';
+import { analyzeAudio, detectOnsets, detectSilence, measureLoudness } from '../src/audio.js';
 import { alignCells, parseSrt, speechCurve } from '../src/asr.js';
 import { DEFAULT_FFMPEG } from '../src/probe.js';
 import { addAudioStrip, composeSheet, layoutCanvas, STRIP_BAR, STRIP_SEP } from '../src/sheet.js';
@@ -136,4 +136,49 @@ test('e2e: 从音频里量出响度与静音段', async (t) => {
   const audio = await analyzeAudio({ input: file });
   assert.equal(audio.source, 'ebur128');
   assert.equal(audio.silences.length, 1);
+});
+
+/* ---------------------------------------------------------------- 声音事件 */
+
+/** 造一条 10 秒 100ms 的响度序列：2–4s 突然变响，7s 突然变安静 */
+function fakeLoudness() {
+  const series = [];
+  for (let i = 0; i < 100; i++) {
+    const t = i / 10;
+    let v = -30;
+    if (t >= 2 && t < 4) v = -15;      // 突然 +15dB
+    if (t >= 4 && t < 7) v = -28;
+    if (t >= 7) v = -70;               // 跌到静音
+    series.push(v);
+  }
+  return { series, step: 0.1 };
+}
+
+test('detectOnsets: 抓到突然变响与突然安静', () => {
+  const ev = detectOnsets(fakeLoudness());
+  assert.ok(ev.length >= 2, `应至少两个事件，实得 ${JSON.stringify(ev)}`);
+  const rise = ev.find((e) => e.kind === 'rise');
+  assert.ok(rise && Math.abs(rise.t - 2) < 0.7, `rise 应落在 2s 附近，实得 ${rise?.t}`);
+  assert.ok(rise.delta >= 6);
+  // 这条序列里有两个 drop（4s 从 -15 掉到 -28，7s 掉进静音），两个都算对
+  const dropAt7 = ev.find((e) => e.kind === 'drop' && Math.abs(e.t - 7) < 0.7);
+  assert.ok(dropAt7, `7s 附近应有一个 drop，实得 ${JSON.stringify(ev)}`);
+  assert.ok(dropAt7.delta <= -12);
+});
+
+test('detectOnsets: 平稳音频不出事件', () => {
+  const flat = { series: Array(100).fill(-25), step: 0.1 };
+  assert.deepEqual(detectOnsets(flat), []);
+});
+
+test('detectOnsets: 相邻事件合并（不把渐强拆成一串）', () => {
+  const series = Array.from({ length: 60 }, (_, i) => (i < 10 ? -40 : -20 + (i % 3)));
+  const ev = detectOnsets({ series, step: 0.1 }, { minGap: 1.5 });
+  const gaps = ev.slice(1).map((e, i) => e.t - ev[i].t);
+  for (const g of gaps) assert.ok(g >= 1.5, `事件间隔应 ≥ minGap，实得 ${g}`);
+});
+
+test('detectOnsets: 空输入不炸', () => {
+  assert.deepEqual(detectOnsets({ series: [], step: 0.1 }), []);
+  assert.deepEqual(detectOnsets(undefined), []);
 });

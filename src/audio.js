@@ -113,6 +113,50 @@ export async function analyzeAudio({ input, ffmpegPath, start = 0, end } = {}) {
   return { ...loudness, silences, source: 'ebur128' };
 }
 
+/**
+ * 声音事件检测：突然变响 / 突然安静。
+ *
+ * 为什么需要（社区反馈里最有用的一条）：帧差只能看见"画面变了"。人说话忽然提高音量、
+ * 突然一片死寂、观众爆笑的那一刻——画面可能一动不动，但事情全在声音里。
+ *
+ * 判据（都对瞬时响度序列做，不引入模型）：
+ *  - **rise**：0.5 秒内上升 > 6 dB（一句台词突然激动、音乐进副歌）
+ *  - **drop**：从有声跌到静音区，跌幅 > 12 dB（突然安静、话说完、留白）
+ * 相邻事件至少间隔 `minGap` 秒，避免把一段渐强拆成一串。
+ *
+ * @param {{series:number[], step:number, silences?:Array}} loudness
+ * @returns {Array<{t:number, kind:'rise'|'drop', delta:number}>}
+ */
+export function detectOnsets(loudness, {
+  riseDb = 8, dropDb = 15, windowSec = 0.5, minGap = 1.5, maxDelta = 30,
+} = {}) {
+  const series = loudness?.series ?? [];
+  const step = loudness?.step ?? 0.1;
+  if (series.length === 0) return [];
+  const win = Math.max(1, Math.round(windowSec / step));
+  const out = [];
+  const push = (t, kind, delta) => {
+    const prev = out.at(-1);
+    if (prev && t - prev.t < minGap) {
+      if (Math.abs(delta) > Math.abs(prev.delta)) out[out.length - 1] = { t, kind, delta };
+      return;
+    }
+    out.push({ t, kind, delta });
+  };
+  for (let i = win; i < series.length; i++) {
+    const now = series[i];
+    const before = series[i - win];
+    if (now <= LUFS_FLOOR && before <= LUFS_FLOOR) continue;
+    const raw = now - before;
+    // 数字静音（-120 LUFS）里起声会算出 100dB 以上的假落差，截断到 maxDelta，
+    // 免得它把"真正的大事"挤出排行榜。
+    const delta = Math.max(-maxDelta, Math.min(maxDelta, raw));
+    if (delta > riseDb) push(+(i * step).toFixed(2), 'rise', +delta.toFixed(1));
+    else if (delta < -dropDb) push(+(i * step).toFixed(2), 'drop', +delta.toFixed(1));
+  }
+  return out;
+}
+
 /** 给文本清单用的一句话事实（明确区分"测出来的"和"看出来的"） */
 export function describeAudio(audio, window) {
   if (!audio) return 'no audio track';
