@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.2] — 2026-10-27
+
+Three things, all of them about *not* wasting the reader's attention.
+
+**`layout: 'strip'` is gone.** It was never worth its surface area: at equal cell count a grid canvas keeps
+a normal aspect ratio, so the cells are actually **bigger**, and the burned-in indices already settle the
+reading order. Removed the parameter, the 8:1 aspect guard and every doc mention.
+*Breaking for anyone who passed it — hence the version note below.*
+
+**Transcript vs silence consistency.** A line that sits >60 % inside a detected silence is counted and
+reported: either the speech is under the −40 dB gate, or the ASR invented it. Pure in-memory comparison —
+measured **0.009 ms** for 222 lines × 11 gaps, no extra ffmpeg call, one line in the text block when non-zero.
+
+**A real manual.** `docs/USAGE.md` + `docs/USAGE.zh.md`: three install paths, a 3-minute first run, every
+parameter of all three tools, six workflows, transcript backend config, cache, a troubleshooting table built
+from failures we actually hit, and a cost table.
+
+> Versioning note: removing a parameter is technically a breaking change (0.3.0). It is released as 0.2.2
+> because the parameter had existed for under an hour and nobody could have depended on it.
+
 ## [0.2.1] — 2026-10-27
 
 Everything since 0.2.0, as one patch release (the whole set is polish and a few parameters, no
