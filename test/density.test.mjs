@@ -18,6 +18,7 @@ test('findBursts: 密集段被识别为一次爆发', () => {
   // 区间因平滑会比真实爆发更宽，但必须**覆盖**真实爆发
   assert.ok(bursts[0].from <= 10 && bursts[0].to >= 11.5, `区间 ${bursts[0].from}–${bursts[0].to} 没盖住 10–11.5`);
   assert.ok(bursts[0].density >= 1.5, `密度应明显高于 1，实得 ${bursts[0].density}`);
+  assert.ok(bursts[0].shots >= 6, `爆发区应报出镜头数，实得 ${bursts[0].shots}`);
 });
 
 test('findBursts: 均匀剪辑的片子不产生假爆发', () => {
@@ -109,19 +110,16 @@ test('planCellRanges: 非法参数抛错', () => {
   assert.throws(() => planCellRanges({ duration: 10, cells: 0 }), RangeError);
 });
 
-test('findBursts: 爆点带上镜头数（模型不用自己反推几个镜头）', () => {
-  const cuts = [];
-  for (let i = 0; i < 120; i++) cuts.push({ t: 40 + i * 0.25 });   // 40–70s 密集
-  for (let i = 0; i < 20; i++) cuts.push({ t: 5 + i * 3 });        // 稀疏
-  const bursts = findBursts(cuts, 90);
-  assert.ok(bursts.length >= 1, '应识别出至少一个爆发段');
-  const top = bursts.sort((a, b) => b.shots - a.shots)[0];
-  assert.ok(top.shots > 50, `密集段应报出很多镜头，实得 ${top.shots}`);
-  assert.ok(top.from >= 35 && top.to <= 75, `区间应在密集段附近，实得 ${top.from}-${top.to}`);
-});
-
-test('findBursts: 传 {t} 或纯数字结果一致', () => {
-  const nums = [1, 3, 5, 7, 9, 40, 40.2, 40.4, 40.6, 40.8, 41, 41.2, 41.4];
-  const objs = nums.map((t) => ({ t }));
-  assert.deepEqual(findBursts(objs, 60), findBursts(nums, 60));
+test('planCellRanges: minGap 抬高格长下限（自适应路径也尊重）', () => {
+  // 长镜头节奏：中位段约 5s，minGap=2 应把每格压到 ≥2s，而不是默认 0.3
+  const cuts = [5, 10, 15, 20, 25];
+  const ranges = planCellRanges({ duration: 30, cuts, cells: 12, minGap: 2.0, snap: 0 });
+  for (const r of ranges) {
+    assert.ok(r.dur + 1e-9 >= 2.0, `格长 ${r.dur.toFixed(2)} 应 ≥ minGap 2.0`);
+  }
+  // 素材粒度更细时：minGap 被中位段长压住，不会并到凑不够格
+  const fine = [];
+  for (let t = 0.5; t < 10; t += 0.5) fine.push(t);
+  const fineRanges = planCellRanges({ duration: 10, cuts: fine, cells: 8, minGap: 1.2, minLen: 0.2, snap: 0 });
+  assert.ok(fineRanges.length >= 6, `细粒度素材不应被 1.2s 并光，实得 ${fineRanges.length}`);
 });

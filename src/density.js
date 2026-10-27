@@ -95,26 +95,27 @@ export function densityCurve({
 
 /**
  * 找出"剪辑最密"的时段（只用于报告，不影响分配）。
+ * `shots` = 区间内切点数 + 1（这段里大约有几刀画面）。
  */
 export function findBursts(cuts, duration, { window = RATE_WINDOW, max = MAX_DENSITY } = {}) {
-  // densityCurve 只认数字；调用方有时传 {t}，这里统一一次
-  const ts = cuts.map((c) => (typeof c === 'number' ? c : c.t));
+  // 调用方有时传 {t}，这里统一成数字一次
+  const ts = (cuts ?? []).map((c) => (typeof c === 'number' ? c : c.t)).filter(Number.isFinite);
   const { density, bins, meanRate } = densityCurve({ duration, cuts: ts, window, max });
   if (meanRate === 0) return [];
+  const sorted = [...ts].filter((c) => c > 0 && c < duration).sort((a, b) => a - b);
   const bursts = [];
   let start = -1;
   for (let i = 0; i <= bins; i++) {
     const hot = i < bins && density[i] > 1.5;
     if (hot && start < 0) start = i;
     if (!hot && start >= 0) {
-      const to = +Math.min(duration, i * BIN).toFixed(2);
       const from = +(start * BIN).toFixed(2);
+      const to = +Math.min(duration, i * BIN).toFixed(2);
+      const nCuts = upperBound(sorted, to) - lowerBound(sorted, from);
       bursts.push({
-        from,
-        to,
+        from, to,
         density: +density[start].toFixed(2),
-        // 这一小段里切了几刀 —— 只有密度数字时，模型还得自己反推"到底几个镜头"
-        shots: ts.filter((t) => t >= from && t < to).length,
+        shots: nCuts + 1,
       });
       start = -1;
     }
@@ -131,12 +132,29 @@ export function findBursts(cuts, duration, { window = RATE_WINDOW, max = MAX_DEN
  */
 export function planCellRanges({
   duration, cuts = [], cells, bin = BIN, window = RATE_WINDOW, max = MAX_DENSITY,
-  snap = 2.0, snapRatio = 0.3, minLen = 0.3, speech, audioEvents = [],
+  snap = 2.0, snapRatio = 0.3, minLen = 0.3, minGap = 0, speech, audioEvents = [],
 } = {}) {
   if (!(duration > 0)) throw new RangeError(`duration must be > 0, got ${duration}`);
   if (!Number.isInteger(cells) || cells < 1) throw new RangeError(`cells must be a positive integer, got ${cells}`);
 
   const { density, bins } = densityCurve({ duration, cuts, bin, window, max, speech });
+
+  // minGap：与 fitSegments 同口径——偏好最小格长，但不能粗过素材自身粒度，
+  // 也不能粗到塞不下请求的格数（否则 cells×sheets 会被默默砍掉）。
+  // 自适应路径以前完全忽略 minGap，导致 CLI/--min-gap 对有切点的片无效。
+  let floor = Math.max(0.05, minLen);
+  if (minGap > 0) {
+    const sortedCuts = [...cuts].filter((c) => c > 0 && c < duration).sort((a, b) => a - b);
+    const gaps = [];
+    let prev = 0;
+    for (const c of sortedCuts) { gaps.push(c - prev); prev = c; }
+    gaps.push(duration - prev);
+    gaps.sort((a, b) => a - b);
+    const mid = gaps.length ? gaps[Math.floor(gaps.length / 2)] : duration;
+    const grain = Math.max(0.2, mid * 0.9);
+    floor = Math.max(floor, Math.min(minGap, grain));
+  }
+  floor = Math.min(floor, duration / cells);
 
   // 声音事件加权：突然变响/突然安静的地方，画面往往没变但事情发生了，
   // 给它 ±1 秒的密度加成，让边界往那儿靠（权重保守，1.6 倍，避免盖过画面信号）。
@@ -174,8 +192,8 @@ export function planCellRanges({
     }
     let t = Math.min(duration, Math.max(0, lo * bin));
     t = snapTo(t, idealLen * snapRatio);
-    t = Math.max(t, bounds.at(-1) + minLen);
-    t = Math.min(t, duration - minLen * (cells - bounds.length));
+    t = Math.max(t, bounds.at(-1) + floor);
+    t = Math.min(t, duration - floor * (cells - bounds.length));
     if (t > bounds.at(-1)) bounds.push(t);
   }
   bounds.push(duration);
