@@ -64,6 +64,16 @@ video_storyboard({ input, cells: 16, sheets: 4, cellRange: [43, 64], textOnly: t
 
 `textOnly` 不返回图，所以翻页不花 token；扫描与 ASR 结果都缓存后，**每页约 0.8 秒**。
 
+**整片批处理（命令行）**——一部两小时的片子要 24 个窗口，手敲 24 次 `--from/--to` 不叫工作流：
+
+```bash
+node bin/storyboard.mjs film.mp4 --batch 300 --out film.png
+# → film-w01.png … film-w24.png，外加 film-timeline.md
+#   （窗口 | 格数 | 切点 | 字数 | 图片路径，一张表串成整条时间线）
+```
+
+尾巴短于 30 秒的窗口会并进前一个，而不是花 384 token 换一张只有 1 格的 2 秒图。
+
 ## 一、它到底解决了什么问题
 
 纯文本模型看不到视频。现有三条路各有硬伤：
