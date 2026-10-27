@@ -50,7 +50,8 @@
     "README.zh.md",
     "CHANGELOG.md",
     "LICENSE",
-    "CREDITS.md"
+    "CREDITS.md",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=20"
