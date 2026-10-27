@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  autoThreshold, DEFAULT_THRESHOLD, frameToHsv, rgbToHsv, scanSummary, scorePair, suppressClose, SCAN_W,
+  assessDegraded, autoThreshold, DEFAULT_THRESHOLD, frameToHsv, rgbToHsv, scanSummary, scorePair,
+  suppressClose, SCAN_W,
 } from '../src/scan.js';
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -146,4 +147,16 @@ test('scanSummary: 分位数正确且升序', () => {
   assert.equal(s.p90, 90);
   assert.equal(s.max, 99);
   assert.deepEqual(scanSummary([]), { p50: 0, p90: 0, p95: 0, p99: 0, max: 0, frames: 0 });
+});
+
+test('assessDegraded: 运镜被切碎时标成 motion', () => {
+  // 30 秒 100 刀（中位 0.3s）+ 40% 帧超阈值 → 典型的匀速运镜被逐帧切
+  assert.equal(assessDegraded({ span: 30, cuts: 100, hotRatio: 0.4 }), 'motion');
+});
+
+test('assessDegraded: 正常剪辑不标', () => {
+  assert.equal(assessDegraded({ span: 30, cuts: 15, hotRatio: 0.4 }), null);   // 中位 2s
+  assert.equal(assessDegraded({ span: 30, cuts: 100, hotRatio: 0.1 }), null);  // 高分帧很少
+  assert.equal(assessDegraded({ span: 0, cuts: 5, hotRatio: 0.9 }), null);
+  assert.equal(assessDegraded({ span: 30, cuts: 0, hotRatio: 0.9 }), null);
 });

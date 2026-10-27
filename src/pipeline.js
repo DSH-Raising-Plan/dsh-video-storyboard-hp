@@ -236,6 +236,7 @@ export async function runStoryboard(opts) {
       cuts: scan.cuts,
       summary: scan.summary,
       threshold: scan.threshold,
+    ...(scan.degraded ? { degraded: scan.degraded } : {}),
       cached: Boolean(scan.cached),
       audio: null,
       transcript: transcriptInfo
@@ -320,6 +321,7 @@ export async function runStoryboard(opts) {
     cuts: scan.cuts,
     summary: scan.summary,
     threshold: scan.threshold,
+    ...(scan.degraded ? { degraded: scan.degraded } : {}),
     cached: Boolean(scan.cached),
     audio: stripAudio
       ? {
@@ -421,7 +423,7 @@ export async function formatProbe(info) {
   // 两种读法，**明确标出哪种会剧透**。
   // 追剧情时不能先看全片总览：一张盖住片尾的图等于把结局摆在你脸上。
   // 短片不铺这些：一句话能说完的片子，给一条建议就够，别用通用模板灌水。
-  if (mins > 20) {
+  if (mins > 8) {
     // 只看时长给个粗估（不调 suggest：probe 没扫描，cuts=0 会被当成"单镜头"，算出 4 格那种假结果）
     const estCells = Math.min(16, Math.max(4, Math.round(info.duration / 40)));
     const estSheets = Math.min(4, Math.ceil(info.duration / 300));
@@ -554,6 +556,12 @@ export function formatManifest(result, {
     lines.push('footer strip shares the timeline: teal bars = loudness (taller = louder), ' +
       'grey blocks = silence, yellow ticks = cut points.');
   }
+  // 切点数字不可信时必须说出来 —— 否则模型会拿 cuts=N 当节奏依据
+  if (result.degraded === 'motion') {
+    lines.push('cut count unreliable here: median shot under 0.5s with many frames above the threshold — ' +
+      'this is likely continuous camera motion being cut into pieces. Read the pictures; do not quote cuts=N as pacing.');
+  }
+
   // 快剪爆发点：只给"密度"和"每格几刀"还不够——模型不知道"哪一段是连拍的"。
   // 这一行把片段区间和镜头数直接说出来，并给出可执行的下一步。
   if (result.plan?.bursts?.length) {

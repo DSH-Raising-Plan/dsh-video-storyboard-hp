@@ -30,7 +30,20 @@ If you already described this file, cite that instead of describing it again.
 It stores **mechanical facts only** (path, window, cells, cuts, timestamp) — never model output, so a
 previous conclusion cannot leak into a new conversation as if it were evidence.
 
-Tests 189 → **197**.
+**Two honesty fixes in the scanner**, both from reading a contributor's write-up rather than their code:
+
+- the threshold is now applied with `> threshold + 1e-6` and capped to the target count. With `>=`, a
+  branch landing exactly on a quantile drags an entire cluster of tied frames in (measured: +30 % cuts on
+  one clip). On our two test clips the counts are unchanged (42 / 141) — this is a safety net, not a change.
+- **`degraded: 'motion'`**: median shot < 0.5 s *and* more than 30 % of frames above the threshold means
+  continuous camera motion being cut into pieces, not editing. The manifest then says
+  `cut count unreliable here … do not quote cuts=N as pacing`. Better to admit the number is meaningless
+  than to let a model build a story on it.
+
+`video_probe` also offers the STRUCTURE/SEQUENCE menu from 8 minutes instead of 20 — a 10-minute video
+benefits from the choice as much as a feature film does.
+
+Tests 189 → **199**.
 
 ## [0.2.2] — 2026-10-27
 

@@ -124,6 +124,20 @@ export function autoThreshold(scores, { duration, minGap, floor = 12 } = {}) {
 }
 
 /** 分数分布的摘要，供 suggest() 判断"内容有多密" */
+/**
+ * 切点计数是不是不可信？连续运镜会被逐帧切成"切点"，于是 cuts=N 变成一个没有节奏含义的数字。
+ *
+ * 判据：中位镜头 < 0.5 秒，且超过 30% 的帧都在阈值之上 —— 真正的剪辑不会这样，
+ * 只有匀速运镜/甩镜/手持抖动会。
+ *
+ * @returns {'motion'|null}
+ */
+export function assessDegraded({ span, cuts, hotRatio }) {
+  if (!(span > 0) || !(cuts > 0)) return null;
+  const medianShot = span / cuts;
+  return medianShot < 0.5 && hotRatio > 0.3 ? 'motion' : null;
+}
+
 export function scanSummary(scores) {
   if (!Array.isArray(scores) || scores.length === 0) {
     return { p50: 0, p90: 0, p95: 0, p99: 0, max: 0, frames: 0 };
@@ -212,9 +226,28 @@ export function scanShots(opts) {
       const used = threshold === 'auto'
         ? autoThreshold(scores, { duration: end !== undefined ? end - start : frame / fps })
         : threshold;
-      const raw = stats.filter((s) => s.score >= used).map((s) => ({ ...s }));
+      // 阈值用**严格大于 + 一个极小 ε**：autoThreshold 落在某个分位上时，
+      // 一大堆同分帧会整簇被 `>=` 拖进来（实测过一份素材因此多出三成切点）。
+      // 再用目标个数做上限，保证"同分整簇"不会把节奏带偏。
+      const eps = 1e-6;
+      const above = stats.filter((s) => s.score > used + eps);
+      const cap = autoThreshold(scores, { duration: end !== undefined ? end - start : frame / fps }).target;
+      const picked = cap > 0 && above.length > cap
+        ? [...above].sort((a, b) => b.score - a.score).slice(0, cap).sort((a, b) => a.t - b.t)
+        : above;
+      const raw = picked.map((s) => ({ ...s }));
       const cuts = suppressClose(raw, minGap);
-      resolve({ cuts, stats, frames: frame, threshold: used, summary: scanSummary(scores) });
+
+      // 诚实度：中位镜头极短、且大量帧都超过阈值 —— 多半是连续运镜被逐帧切碎，
+      // 这时 cuts=N 这个数字不可信，必须说出来，而不是让模型拿它当节奏依据。
+      const span = end !== undefined ? end - start : frame / fps;
+      const hotRatio = stats.length > 0 ? above.length / stats.length : 0;
+      const degraded = assessDegraded({ span, cuts: cuts.length, hotRatio });
+
+      resolve({
+        cuts, stats, frames: frame, threshold: used, degraded,
+        summary: scanSummary(scores),
+      });
     });
   });
 }
