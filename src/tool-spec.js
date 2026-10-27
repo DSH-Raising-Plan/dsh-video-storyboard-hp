@@ -13,6 +13,7 @@
 
 export const TOOL_NAME = 'video_storyboard';
 export const ZOOM_TOOL_NAME = 'video_zoom';
+export const PROBE_TOOL_NAME = 'video_probe';
 
 export function storyboardToolSpec() {
   return {
@@ -173,6 +174,42 @@ export function zoomToolSpec() {
       },
     },
     timeoutMs: 300_000,
+    isConcurrencySafe() {
+      return true;
+    },
+  };
+}
+
+/**
+ * 第三个工具：只读容器头，几毫秒。让模型在花掉第一张图的 384 token 之前，
+ * 先知道"多长、多大、有没有音轨/字幕、按什么粒度读"。
+ */
+export function probeToolSpec() {
+  return {
+    name: PROBE_TOOL_NAME,
+    description: [
+      'Read a video\'s container metadata without decoding a single frame: duration, resolution,',
+      'frame rate, rotation, audio track, subtitle tracks, and a suggested reading plan.',
+      '',
+      'Call this FIRST when you do not already know how long the file is. It costs no image tokens.',
+      'Then either video_storyboard (overview, or a window) or video_zoom (close-up).',
+    ].join('\n'),
+    parameters: {
+      input: { type: 'string', required: true, description: 'Absolute path to the video file.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          text: { type: 'string', required: true, description: 'Metadata plus a suggested reading plan.' },
+        },
+      },
+      render(args, value) {
+        return [{ type: 'text', text: value.text }];
+      },
+    },
+    timeoutMs: 30_000,
     isConcurrencySafe() {
       return true;
     },

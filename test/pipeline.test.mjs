@@ -168,10 +168,11 @@ test('插件接线: apply() 注册一个叫 video_storyboard 的工具', async (
   };
   try {
     const disposer = await apply(ctx);
-    assert.deepEqual(registered.map((t) => t.name).sort(), ['video_storyboard', 'video_zoom']);
+    assert.deepEqual(registered.map((t) => t.name).sort(),
+      ['video_probe', 'video_storyboard', 'video_zoom']);
     assert.equal(typeof disposer, 'function', 'apply 必须返回 disposer');
     disposer();
-    assert.equal(disposed, 2, '两个工具都应被释放');
+    assert.equal(disposed, 3, '三个工具都应被释放');
     // 真跑一次 execute，确保交给附件的是真 PNG（这一条能抓住线上那个 malformed 事故）
     const dir2 = await mkdtemp(join(tmpdir(), 'dsh-exec-'));
     t.after(() => rm(dir2, { recursive: true, force: true }));
@@ -191,6 +192,14 @@ test('插件接线: apply() 注册一个叫 video_storyboard 的工具', async (
     assert.equal(saved.length, 1);
     assert.equal(saved[0].data.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
     assert.match(z.text, /window="1\.00-3\.00"/);
+
+    // probe 也真跑一次：不取帧、不花钱，只读容器头
+    const probe = registered.find((t) => t.name === 'video_probe');
+    const p = await probe.execute({ input: fixture });
+    assert.match(p.text, /<video[^>]*duration="6\.0/);
+    // 这个 fixture 只有视频流，正好覆盖"没音轨"的分支
+    assert.match(p.text, /audio="no"/);
+    assert.match(p.text, /no audio track/);
   } catch (error) {
     if (/Cannot find package|Cannot find module/.test(String(error))) {
       return t.skip('host @deepseek-ai/dsh-tools not resolvable here');

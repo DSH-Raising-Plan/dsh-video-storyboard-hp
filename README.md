@@ -203,12 +203,30 @@ come back silently.
 Speech density (chars/sec) is also fed into the density curve as a **third** signal, so
 talk-heavy stretches get shorter cells — same mechanism as cut density.
 
+**Content-type routing.** Both halves of the picture are used: loudness and speech rate move in opposite
+directions (tutorial 5.6 chars/s @ −23 LUFS, music PV 0.16 @ −14.2). `meanLufs > −18 && charsPerSec < 1`
+marks a music-driven clip, which keeps the cell floor at 9 instead of letting the "dialogue carries the
+info" rule shrink it. See [docs/BASELINE.md](docs/BASELINE.md).
+
+**Term dictionary.** ASR will always mangle specialist vocabulary (`彗差→绘插`, `八羽怪→巴与怪`). Put the
+corrections in `~/.dsh/asr.json` and they are applied deterministically, single-pass, with the count
+reported in the text block:
+
+```json
+{ "baseUrl": "http://127.0.0.1:8000/v1", "key": "local", "terms": { "绘插": "彗差", "巴与怪": "八羽怪" } }
+```
+
 ### Two tools, one pipeline
 
 | tool | for | cells | images | tokens |
 |---|---|---|---|---|
+| `video_probe` | container metadata + a reading plan, before spending anything | — | 0 | **0** |
 | `video_storyboard` | the whole clip (or a slice) at a glance | 4–16 | 1–4 | 384 × images |
 | `video_zoom` | one short window, read closely | 1–9 (default 6) | 1 | 384 |
+
+`video_probe` reads the container only — no decode, no image. Use it first when the length is unknown: it
+replies with duration/resolution/rotation/audio/subtitle tracks and, for anything over 20 minutes, tells
+you to read the file in 5-minute windows instead of scanning it whole.
 
 Both run the same pipeline; zoom just narrows the window and drops `adaptive`, so each cell gets
 ~4× the pixels of a 16-cell overview. On the same 96–128 s window of a talking-head video:

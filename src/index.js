@@ -12,9 +12,10 @@
  *  - saveImage 要的是**真正编码后的字节**（PNG/JPEG），不是裸 RGB —— 它会解码校验
  */
 
-import { runStoryboard, formatManifest } from './pipeline.js';
+import { runStoryboard, formatManifest, formatProbe } from './pipeline.js';
+import { probeVideo } from './probe.js';
 import {
-  storyboardToolSpec, zoomToolSpec, validateToolArgs, validateZoomArgs,
+  storyboardToolSpec, zoomToolSpec, probeToolSpec, validateToolArgs, validateZoomArgs,
 } from './tool-spec.js';
 
 export const name = 'dsh-video-storyboard';
@@ -91,10 +92,22 @@ export async function apply(ctx) {
     }, validateZoomArgs(args)),
   });
 
-  const disposeStoryboard = ctx.tools.register(storyboard);
-  const disposeZoom = ctx.tools.register(zoom);
+  // 只读容器头，不花图片 token —— 让模型在第一次出图前先知道"多长、按什么粒度读"
+  const probe = defineTool({
+    ...probeToolSpec(),
+    async execute(args) {
+      if (!args?.input) throw new Error('input is required');
+      const info = { ...(await probeVideo(args.input)), path: args.input };
+      return { text: formatProbe(info) };
+    },
+  });
+
+  const disposers = [
+    ctx.tools.register(storyboard),
+    ctx.tools.register(zoom),
+    ctx.tools.register(probe),
+  ];
   return () => {
-    disposeZoom?.();
-    disposeStoryboard?.();
+    for (const dispose of disposers.reverse()) dispose?.();
   };
 }

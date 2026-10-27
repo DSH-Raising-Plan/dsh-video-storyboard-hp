@@ -84,6 +84,8 @@ export function resolveAsrConfig(env = process.env) {
     language: envLanguage || file.language || 'zh',
     fileKey: typeof file.key === 'string' && file.key ? file.key : undefined,
     source: fromEnv ? 'env' : (file.baseUrl || file.key ? 'file' : 'default'),
+    // 术语校正表：错误写法 → 正确写法
+    terms: file.terms && typeof file.terms === 'object' ? file.terms : undefined,
     ...(file.path ? { configPath: file.path } : {}),
   };
 }
@@ -329,6 +331,50 @@ export function filterSuspectSegments(segments, { minDur = 8, minCharsPerSec = 0
     kept.push(seg);
   }
   return { kept, dropped };
+}
+
+/**
+ * 术语校正表。
+ *
+ * 实测 ASR 对专业名词必错（`彗差→绘插`、`八羽怪→巴与怪`、`沧野→苍野`、`收光圈→烧光圈`）。
+ * 与其让模型自己猜，不如给一份用户词典做**确定性替换**，并把替换次数报出来（不静默改写原文）。
+ *
+ * 长词优先匹配，避免 `像散` 被 `像` 抢先替换掉。
+ *
+ * @param {Array<{text:string}>} segments
+ * @param {Record<string,string>} terms 错误写法 → 正确写法
+ * @returns {{segments:Array, replaced:number, touched:number}}
+ */
+export function applyTermMap(segments, terms) {
+  const entries = Object.entries(terms ?? {})
+    .filter(([from, to]) => typeof from === 'string' && from && typeof to === 'string');
+  if (entries.length === 0) return { segments: segments ?? [], replaced: 0, touched: 0 };
+
+  // 一次扫描、单遍替换：用"长词优先"的交替式正则，避免替换出来的新文本被后面的短词二次命中
+  // （踩过：像散→像散(AST) 之后，"像"又把新文本里的"像"替换掉）
+  const map = new Map(entries);
+  const pattern = entries
+    .map(([from]) => from)
+    .sort((a, b) => b.length - a.length)
+    .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  const re = new RegExp(pattern, 'g');
+
+  let replaced = 0;
+  let touched = 0;
+  const out = (segments ?? []).map((seg) => {
+    const text = String(seg.text ?? '');
+    let hit = false;
+    const next = text.replace(re, (m) => {
+      replaced += 1;
+      hit = true;
+      return map.get(m) ?? m;
+    });
+    if (!hit) return seg;
+    touched += 1;
+    return { ...seg, text: next };
+  });
+  return { segments: out, replaced, touched };
 }
 
 /** 语音密度曲线：每秒字数，按 bin 采样（供 planCellRanges 当第三条密度信号） */

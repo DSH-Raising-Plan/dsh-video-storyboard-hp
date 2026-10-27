@@ -12,8 +12,8 @@ import { bestLayout, groupByCount, suggest } from './plan.js';
 import { findBursts, planCellRanges } from './density.js';
 import { analyzeAudio, describeAudio } from './audio.js';
 import {
-  ASR_DEFAULTS, alignCells, describeAsrTarget, explainFetchError, extractSubtitleTrack,
-  filterSuspectSegments, speechCurve, transcribeLong,
+  ASR_DEFAULTS, alignCells, applyTermMap, describeAsrTarget, explainFetchError, extractSubtitleTrack,
+  filterSuspectSegments, resolveAsrConfig, speechCurve, transcribeLong,
 } from './asr.js';
 import { cacheKey, pruneCache, withCache } from './cache.js';
 import {
@@ -79,18 +79,6 @@ export async function runStoryboard(opts) {
   }), { enabled: cache });
   if (cache && !scan.cached) await pruneCache();
 
-  let cells = Math.max(0, Number(opts.cells) || 0);
-  let sheets = Math.max(0, Number(opts.sheets) || 0);
-  let suggestion;
-  if (cells === 0) {
-    suggestion = suggest({
-      duration: winDur, cuts: scan.cuts.length, motion: scan.summary.p90, aspect: info.aspect,
-    });
-    cells = suggestion.cells;
-    sheets = sheets || suggestion.sheets;
-  }
-  sheets = sheets || 1;
-
   // ---- 音频测量（零模型：响度 + 静音）。先做，因为静音位置要用来切 ASR 请求。
   const needAudio = info.hasAudio && !textOnly && (audioStrip !== false || transcript !== 'off');
   const audio = needAudio
@@ -122,10 +110,13 @@ export async function runStoryboard(opts) {
         if (asr) {
           // 音乐段的幻觉句会命中多个格子、被复制好几遍，先过滤（结果里报出来，不静默丢）
           const { kept, dropped } = filterSuspectSegments(asr.segments);
+          // 用户词典校正（确定性替换，替换次数会报出来）
+          const { segments: fixed, replaced } = applyTermMap(kept, resolveAsrConfig().terms);
           transcriptInfo = {
+            ...(replaced > 0 ? { termsFixed: replaced } : {}),
             ...asr,
             source: 'asr',
-            segments: kept,
+            segments: fixed,
             suspect: dropped.length,
             suspectDetail: dropped.slice(0, 3).map((d) => ({
               from: +d.from.toFixed(2), to: +d.to.toFixed(2),
@@ -151,6 +142,27 @@ export async function runStoryboard(opts) {
   const speech = relSegments.length > 0
     ? speechCurve(relSegments, { duration: winDur })
     : null;
+
+  // ---- 格数：放在台词与音频之后，是为了让"口播多不多 / 是不是音乐驱动"参与决策
+  let cells = Math.max(0, Number(opts.cells) || 0);
+  let sheets = Math.max(0, Number(opts.sheets) || 0);
+  let suggestion;
+  if (cells === 0) {
+    const speechChars = relSegments.reduce((n, seg) => n + seg.text.length, 0);
+    const speechRate = winDur > 0 ? speechChars / winDur : 0;
+    suggestion = suggest({
+      duration: winDur,
+      cuts: scan.cuts.length,
+      motion: scan.summary.p90,
+      aspect: info.aspect,
+      speechRate,
+      hasSubtitle: info.hasSubtitle,
+      meanLufs: audio?.mean,
+    });
+    cells = suggestion.cells;
+    sheets = sheets || suggestion.sheets;
+  }
+  sheets = sheets || 1;
 
   // 两条路：自适应按密度分配格位（快切区多给格），否则退回"并段到 k 格"
   const relCuts = scan.cuts.map((c) => c.t - winStart);
@@ -265,10 +277,15 @@ export async function runStoryboard(opts) {
     transcript: transcriptInfo
       ? { source: transcriptInfo.source, model: transcriptInfo.model ?? null,
         segments: (transcriptInfo.segments ?? []).length,
+        // 全片口径（不是"格内文本"口径）：字/秒是判定内容类型最稳的一个数字
+        chars: (transcriptInfo.segments ?? []).reduce((n, seg) => n + String(seg.text ?? '').length, 0),
+        charsPerSec: +(((transcriptInfo.segments ?? []).reduce((n, seg) => n + String(seg.text ?? '').length, 0))
+          / Math.max(1, winDur)).toFixed(2),
         ...(transcriptInfo.chunks ? { chunks: transcriptInfo.chunks } : {}),
         ...(transcriptInfo.suspect ? {
           suspect: transcriptInfo.suspect, suspectDetail: transcriptInfo.suspectDetail,
         } : {}),
+        ...(transcriptInfo.termsFixed ? { termsFixed: transcriptInfo.termsFixed } : {}),
         ...(transcriptInfo.error ? { error: transcriptInfo.error } : {}) }
       : null,
     plan: {
@@ -305,6 +322,36 @@ const tc = (t) => {
  * 给模型的文本块：可寻址的格位表。
  * 编号同时给"序号"和"行列"，任一读不出来还能靠另一个定位。
  */
+/**
+ * video_probe 的文本：容器信息 + 一个"该怎么读"的建议。
+ * 不扫描、不取帧，只花 ffprobe 的时间（几毫秒）。
+ */
+export function formatProbe(info) {
+  const mins = info.duration / 60;
+  const lines = [
+    `<video path="${info.path ?? ''}" duration="${info.duration.toFixed(2)}" ` +
+      `size="${info.width}x${info.height}" fps="${info.fps.toFixed(2)}" ` +
+      `aspect="${info.aspect.toFixed(3)}" rotation="${info.rotation}" ` +
+      `video="${info.videoCodec}" container="${info.container}" ` +
+      `audio="${info.hasAudio ? (info.audioCodec ?? 'yes') : 'no'}" ` +
+      `subtitles="${info.hasSubtitle ? 'yes' : 'no'}" />`,
+  ];
+  const s = suggest({ duration: info.duration, cuts: 0, motion: undefined, aspect: info.aspect });
+  lines.push(`rough plan: ${s.cells} cells x ${s.sheets} image(s) if taken in one go ` +
+    `(this is a duration-only estimate; cut density can change it).`);
+  if (mins > 20) {
+    const windows = Math.ceil(mins / 5);
+    lines.push(`this is ${mins.toFixed(0)} min: read it in ~5-minute windows instead of one call — ` +
+      `video_storyboard({ input, from: 0, to: 300 }), then 300-600, ... (${windows} windows). ` +
+      `Scanning the whole file first costs ~${(info.duration / 30).toFixed(0)} s of CPU.`);
+  } else if (mins < 1) {
+    lines.push('under a minute: one call is enough.');
+  }
+  if (!info.hasAudio) lines.push('no audio track: transcript will be empty, the grid is visual only.');
+  else if (!info.hasSubtitle) lines.push('no subtitle track: transcript (if any) must come from ASR.');
+  return lines.join('\n');
+}
+
 /**
  * 把结果渲染成给模型看的文本清单。
  *
@@ -378,6 +425,9 @@ export function formatManifest(result, {
   if (result.transcript?.source === 'asr') {
     lines.push('transcript is ASR output (not a subtitle track): technical terms and names may be ' +
       'misheard — cross-check against on-screen text before quoting them.');
+    if (result.transcript.termsFixed > 0) {
+      lines.push(`${result.transcript.termsFixed} term(s) corrected by the local dictionary (DSH_ASR_TERMS / asr.json "terms")`);
+    }
     if (result.transcript.suspect > 0) {
       const detail = (result.transcript.suspectDetail ?? [])
         .map((d) => `${d.from}-${d.to}s (${d.charsPerSec} chars/s, ${d.reason})`).join(', ');

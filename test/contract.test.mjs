@@ -14,7 +14,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { storyboardToolSpec, validateToolArgs, validateZoomArgs, zoomToolSpec } from '../src/tool-spec.js';
+import {
+  probeToolSpec, storyboardToolSpec, validateToolArgs, validateZoomArgs, zoomToolSpec,
+} from '../src/tool-spec.js';
 
 const HOST_TOOLS = join(homedir(), '.dsh/profiles/node_modules/@deepseek-ai/dsh-tools/lib/index.js');
 const CANDIDATES = [
@@ -89,6 +91,20 @@ test('contract: video_zoom 的 schema 同样过宿主 defineTool', async (t) => 
   // 宿主 schema 没有数值上限，cells:20 会被放行 —— 这正是本地校验必须存在的理由
   assert.deepEqual(host.validateArgs(spec.parameters, { input: 'a', from: 1, to: 2, cells: 20 }), []);
   assert.ok(validateZoomArgs({ input: 'a', from: 1, to: 2, cells: 20 }).length > 0, '本地必须挡住');
+});
+
+test('contract: video_probe 的 schema 同样过宿主 defineTool', async (t) => {
+  if (!host) return t.skip('host @deepseek-ai/dsh-tools not found');
+  const spec = probeToolSpec();
+  const tool = host.defineTool({ ...spec, execute: async () => ({ text: '' }) });
+  assert.equal(tool.name, 'video_probe');
+  assert.deepEqual(tool.parameters.required, ['input']);
+  assert.deepEqual(host.validateArgs(spec.parameters, { input: 'a.mp4' }), []);
+  assert.ok(host.validateArgs(spec.parameters, {}).length > 0);
+  // 只返回文本，不该有 image 块
+  const blocks = spec.output.render({ input: 'a' }, { text: 'hi' });
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].type, 'text');
 });
 
 test('本地兜底校验：越界参数被自己挡住（schema 子集不支持 min/max）', () => {

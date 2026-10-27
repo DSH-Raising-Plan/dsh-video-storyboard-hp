@@ -71,7 +71,7 @@ export const COVERAGE = {
  *   speechRate：台词字数/秒（有字幕或 ASR 时才有；没有就传 0）
  */
 export function suggest(meta) {
-  const { duration, cuts = 0, motion, speechRate = 0, hasSubtitle = false } = meta;
+  const { duration, cuts = 0, motion, speechRate = 0, hasSubtitle = false, meanLufs } = meta;
   if (!(duration > 0)) throw new RangeError(`duration must be > 0, got ${duration}`);
   const shots = Math.max(1, cuts + 1);
   const avgShot = duration / shots;
@@ -87,10 +87,15 @@ export function suggest(meta) {
   const perCell = typeof motion === 'number'
     ? (motion >= 15 ? 12 : motion >= 5 ? 20 : 40)
     : (avgShot < 4 ? 15 : 40);
+  // 内容类型分流（实测基准）：口播片最轻最吵（5.6 字/秒 @ −23 LUFS），音乐片最响最静
+  // （0.3 字/秒 @ −14.2 LUFS）。响度与字/秒是反向的，两个一起看比任何主观判断都准。
+  const musicDriven = Number.isFinite(meanLufs) && meanLufs > -18 && speechRate < 1;
+
   let cells = Math.round(duration / perCell);
   cells = Math.min(cells, shots);            // 格数不该超过镜头数
+  if (musicDriven) cells = Math.max(cells, 9);  // 音乐片的信息在画面上，别把格数压太低
   cells = snapCells(clamp(cells, 4, 16));
-  if ((hasSubtitle || speechRate > 0) && speechRate > 3) {
+  if (!musicDriven && (hasSubtitle || speechRate > 0) && speechRate > 3) {
     cells = snapCells(clamp(Math.round(cells * 0.6), 4, 12));   // 台词承担信息，图只做锚点
   }
 
@@ -103,7 +108,8 @@ export function suggest(meta) {
     ? `画面变化 p90=${motion.toFixed(1)}（${perCell}s/格）`
     : `均镜头 ${avgShot.toFixed(1)}s（${perCell}s/格）`;
   return pick(label, cells, sheets,
-    `${duration.toFixed(0)}s、${shots} 个镜头、${pace} → ${cells} 格 × ${sheets} 张（≈${Math.round(duration / (cells * sheets))}s/格）`);
+    `${duration.toFixed(0)}s、${shots} 个镜头、${pace} → ${cells} 格 × ${sheets} 张（≈${Math.round(duration / (cells * sheets))}s/格）` +
+    (musicDriven ? '·音乐驱动，画面承担信息' : ''));
 }
 
 /** 吸附到"能整除成好布局"的格数，避免出现大量 padding（8→9 比 8+1 空格好） */

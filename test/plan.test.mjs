@@ -298,3 +298,25 @@ test('planWindows: 非法参数抛错', () => {
   assert.throws(() => planWindows(0, 300), RangeError);
   assert.throws(() => planWindows(100, 0), RangeError);
 });
+
+/* ---------------------------------------------------------------- 内容类型分流 */
+
+test('suggest: 音乐驱动的片子（低字/秒 + 高响度）保住格数下限', () => {
+  const base = { duration: 300, cuts: 40, motion: 10 };
+  const talk = suggest({ ...base, speechRate: 5.6, meanLufs: -23 });
+  const music = suggest({ ...base, speechRate: 0.3, meanLufs: -14.2 });
+  assert.ok(music.cells >= 9, `音乐片应至少 9 格，实得 ${music.cells}`);
+  assert.ok(music.cells >= talk.cells, `音乐片格数(${music.cells}) 不该少于口播片(${talk.cells})`);
+  assert.match(music.reason, /音乐驱动/);
+});
+
+test('suggest: 口播片（高字/秒）按台词降格数', () => {
+  const r = suggest({ duration: 600, cuts: 120, motion: 8, speechRate: 5.6, hasSubtitle: true });
+  assert.ok(r.cells <= 12, `口播片应压到 12 格以内，实得 ${r.cells}`);
+  assert.ok(!/音乐驱动/.test(r.reason));
+});
+
+test('suggest: 没有响度信息时不做音乐判断（保持原行为）', () => {
+  const r = suggest({ duration: 300, cuts: 40, motion: 10 });
+  assert.ok(!/音乐驱动/.test(r.reason));
+});

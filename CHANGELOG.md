@@ -14,6 +14,21 @@ of it into a disk overflow file that the model never read, so 44 minutes of dial
   request next, instead of being silently folded into a file.
 - ASR results are cached by (file, window, endpoint, chunk size) — paging no longer re-runs recognition.
 
+**New: `video_probe`.** Container metadata in milliseconds — duration, resolution, rotation, audio and
+subtitle tracks — plus a suggested reading plan. Costs no image tokens, so the model can decide *how* to
+read a file before spending its first 384.
+
+**Content-type routing.** `suggest()` now sees speech rate and loudness, not just duration and motion:
+`meanLufs > −18 && charsPerSec < 1` marks a music-driven clip, which keeps the cell floor at 9 instead of
+letting the "dialogue carries the info" rule shrink it. Measured: concept PV 0.16 chars/s @ −14.2 LUFS
+fires; the tutorial at 5.59 chars/s and the narrative film at 2.05 do not.
+
+**Term dictionary.** `~/.dsh/asr.json` accepts `"terms": {"绘插": "彗差"}` — deterministic replacement over
+ASR output, single-pass (longest match first, no substring re-entry), with the replacement count reported.
+
+**Baseline.** `docs/BASELINE.md`: four clips measured end to end, plus the finding that loudness and speech
+rate move in opposite directions.
+
 ## [0.1.0] — 2026-10-27
 
 ## [0.1.0] — 2026-10-27

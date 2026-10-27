@@ -16,8 +16,8 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
-  chunkWindows, describeAsrTarget, filterSuspectSegments, mergeSegments, resolveAsrConfig,
-  transcribe, transcribeLong,
+  applyTermMap, chunkWindows, describeAsrTarget, filterSuspectSegments, mergeSegments,
+  resolveAsrConfig, transcribe, transcribeLong,
 } from '../src/asr.js';
 import { DEFAULT_FFMPEG } from '../src/probe.js';
 
@@ -305,4 +305,41 @@ test('filterSuspectSegments: 正常长句不会被误杀', () => {
 test('filterSuspectSegments: 空输入不炸', () => {
   assert.deepEqual(filterSuspectSegments([]), { kept: [], dropped: [] });
   assert.deepEqual(filterSuspectSegments(undefined), { kept: [], dropped: [] });
+});
+
+/* ---------------------------------------------------------------- 术语校正 */
+
+test('applyTermMap: 确定性替换，并统计次数', () => {
+  const { segments, replaced, touched } = applyTermMap([
+    { from: 0, to: 1, text: '这个绘插很明显，绘插也是' },
+    { from: 1, to: 2, text: '无关的一句' },
+  ], { 绘插: '彗差' });
+  assert.equal(replaced, 2);
+  assert.equal(touched, 1);
+  assert.equal(segments[0].text, '这个彗差很明显，彗差也是');
+  assert.equal(segments[1].text, '无关的一句');
+});
+
+test('applyTermMap: 长词优先（像散 vs 像）', () => {
+  const { segments } = applyTermMap([{ from: 0, to: 1, text: '球差彗差像散' }],
+    { 像: 'X', 像散: '像散(AST)' });
+  assert.equal(segments[0].text, '球差彗差像散(AST)');
+});
+
+test('applyTermMap: 空词典 / 空输入不炸', () => {
+  assert.deepEqual(applyTermMap([], {}), { segments: [], replaced: 0, touched: 0 });
+  assert.deepEqual(applyTermMap(undefined, undefined), { segments: [], replaced: 0, touched: 0 });
+});
+
+test('resolveAsrConfig: 读取 asr.json 里的 terms', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-cfg-'));
+  await writeFile(join(dir, 'asr.json'), JSON.stringify({
+    baseUrl: 'http://127.0.0.1:8000/v1', key: 'k', terms: { 苍野: '沧野' },
+  }));
+  try {
+    const cfg = resolveAsrConfig({ DSH_HOME: dir });
+    assert.deepEqual(cfg.terms, { 苍野: '沧野' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
