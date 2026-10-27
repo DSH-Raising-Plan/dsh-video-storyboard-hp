@@ -114,6 +114,9 @@ A tail window under 30 s is merged into the previous one instead of spending 384
 window that holds a single cell. Window boundaries are **snapped to real cuts** (one full scan up front,
 `--no-snap` to disable), so a window never ends in the middle of a sentence.
 
+**Full install & usage guide:** [docs/USAGE.md](docs/USAGE.md) · 中文：[docs/USAGE.zh.md](docs/USAGE.zh.md)
+— every parameter, six workflows, troubleshooting, and what each one costs.
+
 ## Quick start
 
 ```bash
