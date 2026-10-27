@@ -208,8 +208,9 @@ Cost on a 90 s clip / 9 cells: `mid` 8.0 s · **`sharp` 9.2 s** · `thumb` 11.3 
 ### Audio: a strip inside the same image
 
 The sheet has a footer strip on the **same time axis** as the cells: teal bars are momentary loudness
-(EBU R128, measured locally with ffmpeg), grey blocks are silence (< −40 dB for > 0.6 s, and the bars are
-skipped there so grey always means silent), yellow ticks are cut points.
+(EBU R128, measured locally with ffmpeg), grey blocks are silence (< −40 dB for > 0.6 s, drawn as a backdrop *behind* the bars), yellow ticks are
+cut points. Note the bars are normalised against p10–p97, so a short bar means "quiet for this film", not
+"silent" — only the grey backdrop means silence.
 
 The strip is a *rough* locator — at 1000 px for 300 s one pixel is 0.3 s, and a vision encoder may
 downscale it further, so read a tick to ±2–4 s. Exact times live in the text: each cell's range is given

@@ -312,33 +312,28 @@ test('e2e: thumb 模式返回段内的真实时刻，而不是段起点', async 
 
 /* ---------------------------------------------------------------- 音频条带 */
 
-test('addAudioStrip: 静音列里不许出现响度柱（灰块说了算）', () => {
+test('addAudioStrip: 柱子画在灰块之上（灰块只在柱子上方露出）', () => {
   const width = 100;
   const height = 40;
   const stripH = 10;
   const sheet = { buffer: Buffer.alloc(width * height * 3), width, height };
+  // 恒定 -20 dB：归一化后柱子占条带约 60%，上方留出灰色，正好能验证层级
+  const series = Array(200).fill(-20);
   const out = addAudioStrip(sheet, {
-    loudness: { series: Array(200).fill(-20), step: 0.1 },   // 全程恒定 -20 dB
-    silences: [{ from: 2, to: 4 }],                          // 10 秒里 2–4 秒静音
+    loudness: { series, step: 0.1 },
+    silences: [{ from: 2, to: 4 }],          // 10 秒里 2–4 秒静音
     cuts: [],
     window: { from: 0, to: 10 },
     stripH,
   });
   const buf = out.buffer;
-  const bodyH = height;
-  let tealAll = 0;
-  let tealInSilence = 0;
-  for (let x = 0; x < width; x++) {
-    const t = (x / width) * 10;
-    const inSil = t > 2.05 && t < 3.95;
-    for (let y = 0; y < stripH; y++) {
-      const i = ((bodyH + y) * width + x) * 3;
-      if (buf[i] === STRIP_BAR[0] && buf[i + 1] === STRIP_BAR[1] && buf[i + 2] === STRIP_BAR[2]) {
-        tealAll += 1;
-        if (inSil) tealInSilence += 1;
-      }
-    }
-  }
-  assert.ok(tealAll > 0, '静音之外应该有柱子');
-  assert.equal(tealInSilence, 0, '静音段内不该有柱子（之前会被相对归一化漏出来）');
+  const x = 30;                              // 3.0s，落在静音里
+  const row = (y) => ((height + y) * width + x) * 3;
+  const isGrey = (i) => buf[i] === 42 && buf[i + 1] === 42 && buf[i + 2] === 46;
+  const isBar = (i) => buf[i] === STRIP_BAR[0] && buf[i + 1] === STRIP_BAR[1] && buf[i + 2] === STRIP_BAR[2];
+
+  // 第 0 行是分隔线（60,60,66），从第 1 行开始才是条带
+  assert.ok(isGrey(row(1)), '静音列顶部应露出灰色 (42,42,46)');
+  assert.ok(isBar(row(stripH - 1)), '柱子应压在灰块之上（最底行是青色）');
 });
+

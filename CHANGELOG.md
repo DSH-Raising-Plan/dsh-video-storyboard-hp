@@ -48,10 +48,9 @@ takes `minGap` and `layout: 'strip'`; audio strip height is capped by cell heigh
 `cut points (3): 00:12.75, 00:16.13, 00:44.50` — exact times, because the strip can only be read to
 ±2–4 s. Busy windows still get counts only, so an overview does not pay for a 141-entry list.
 
-**Silence now wins the strip.** A silence column had a teal bar whenever the material was quiet overall
-(silencedetect uses an absolute −40 dB threshold; the bars are normalised against p10–p97, so a −45 dB
-"silence" could still render at 15 % height). Bars are now skipped inside silence, so the legend holds:
-grey means silent.
+**Silence blocks stay a backdrop.** Tried drawing them as an occluder (bars skipped inside silence); it
+looked like the waveform was chopped into solid grey bars, so it was reverted — grey is a backdrop *behind*
+the bars. The wording now says what a short bar actually means: "quiet for this film", not "silent".
 
 Tests 174 → **186**.
 

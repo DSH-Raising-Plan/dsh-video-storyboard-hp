@@ -227,16 +227,13 @@ export function addAudioStrip(sheet, opts) {
   const span = Math.max(0.001, win.to - win.from);
   const t2x = (t) => Math.round(((t - win.from) / span) * (width - 1));
 
-  // 静音块：整段压暗，先铺底；同时记一张 mask，后面画响度柱时跳过这些列。
-  // 为什么必须跳过：silencedetect 用的是**绝对阈值**（-40 dB），而响度柱是**相对归一化**
-  // （p10..p97）。整体音量偏低的素材里，一段 -45 dB 的"静音"归一化后仍有 15% 柱高，
-  // 于是青色柱子会从灰块底部冒出来——图例说"深色=静音"，视觉上却像"有声音"，自相矛盾。
-  const silenceMask = new Uint8Array(width);
+  // 静音块：整段压暗（铺底），响度柱**画在它上面**。
+  // 早先试过"静音列不画柱子"，图更纯净但很难看——灰块变成一根根实心竖条，
+  // 把波形切断。柱子压上去之后，灰块只在柱子上方露出来，读起来是"波形 + 底色"。
   for (const s of silences) {
     const x0 = Math.max(0, t2x(s.from));
     const x1 = Math.min(width - 1, t2x(s.to));
     for (let x = x0; x <= x1; x++) {
-      silenceMask[x] = 1;
       for (let y = 0; y < stripH; y++) {
         const i = ((height + y) * width + x) * 3;
         out[i] = STRIP_SILENCE[0]; out[i + 1] = STRIP_SILENCE[1]; out[i + 2] = STRIP_SILENCE[2];
@@ -254,7 +251,6 @@ export function addAudioStrip(sheet, opts) {
     const lo = Math.min(sorted[Math.floor(sorted.length * 0.1)] ?? -60, hi - 12);
     const range = Math.max(6, hi - lo);
     for (let x = 0; x < width; x++) {
-      if (silenceMask[x]) continue;        // 静音列不画柱子，灰块说了算
       const t0 = win.from + (x / width) * span;
       const i0 = Math.max(0, Math.floor((t0 - win.from) / step));
       const i1 = Math.max(i0 + 1, Math.min(series.length, Math.ceil(((t0 - win.from) + span / width) / step)));
