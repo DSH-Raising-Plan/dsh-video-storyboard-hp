@@ -243,8 +243,10 @@ export function addAudioStrip(sheet, opts) {
   if (series.length > 0) {
     const audible = series.filter((v) => v > -70);
     const sorted = [...audible].sort((a, b) => a - b);
-    const lo = sorted[Math.floor(sorted.length * 0.1)] ?? -60;
+    // 参照下限至少取到 hi-12dB：否则「全程恒定响度」的素材（如测试音、压得很平的成片）
+    // 会被归一化成一条几乎贴底的细线，看起来像坏了。
     const hi = sorted[Math.floor(sorted.length * 0.97)] ?? -10;
+    const lo = Math.min(sorted[Math.floor(sorted.length * 0.1)] ?? -60, hi - 12);
     const range = Math.max(6, hi - lo);
     for (let x = 0; x < width; x++) {
       const t0 = win.from + (x / width) * span;
