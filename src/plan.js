@@ -14,6 +14,8 @@ export const IMAGE_TOKEN_CAP = 384;
 export const MIN_CELL_W = 240;
 export const MIN_CELL_H = 135;
 export const MAX_SHEETS = 4;
+/** 长条（1×N）的宽高比上限：超过 12:1 就退回宫格 —— 视觉编码器按最长边缩放，格子会小到读不出 */
+export const MAX_STRIP_ASPECT = 12;
 export const DEFAULT_ASPECT = 16 / 9;
 
 /** 画布比例 = (cols / rows) × 源比例。方形宫格才会还原源比例。 */
@@ -218,7 +220,9 @@ export function planTotal(meta, opts = {}) {
  * @param {number} step 每段最长多少秒
  * @param {{cells?:number, maxWindows?:number}} opts
  */
-export function planWindows(duration, step = 300, { cells, maxWindows = 12 } = {}) {
+export function planWindows(duration, step = 300, {
+  cells, maxWindows = 12, boundaries = [], snapRatio = 0.2,
+} = {}) {
   if (!(duration > 0)) throw new RangeError(`duration must be > 0, got ${duration}`);
   if (!(step > 0)) throw new RangeError(`step must be > 0, got ${step}`);
   // 段数超上限时不是"砍掉尾巴"，而是把每段拉长，保证覆盖全片
@@ -251,8 +255,35 @@ export function planWindows(duration, step = 300, { cells, maxWindows = 12 } = {
       cells: n, images, approxTokens: images * IMAGE_TOKEN_CAP,
     });
   }
+  // 窗口边界吸附到最近的剪辑点：按钟表切会把一句话劈成两半，
+  // 按内容切则每个窗口都是"几个完整镜头"。只吸附到 step×snapRatio 以内的点，
+  // 太远就不动（否则窗口长度会失控）。
+  let snapped = 0;
+  if (boundaries.length > 0 && windows.length > 1) {
+    const sorted = [...boundaries].filter((t) => t > 0 && t < duration).sort((a, b) => a - b);
+    const limit = span * snapRatio;
+    for (let i = 1; i < windows.length; i++) {
+      const target = windows[i].from;
+      let best = null;
+      let bestD = limit;
+      for (const t of sorted) {
+        const d = Math.abs(t - target);
+        if (d < bestD) { best = t; bestD = d; }
+      }
+      if (best === null) continue;
+      const prevFrom = windows[i - 1].from;
+      if (best - prevFrom < span * 0.3) continue;      // 别把窗口压得太短
+      windows[i].from = +best.toFixed(2);
+      windows[i - 1].to = +best.toFixed(2);
+      windows[i].duration = +(windows[i].to - windows[i].from).toFixed(2);
+      windows[i - 1].duration = +(windows[i - 1].to - windows[i - 1].from).toFixed(2);
+      snapped += 1;
+    }
+  }
+
   return {
     total,
+    snapped,
     step: +span.toFixed(2),
     requestedStep: step,
     stepAdjusted,

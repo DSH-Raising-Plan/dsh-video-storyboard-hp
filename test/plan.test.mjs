@@ -337,3 +337,22 @@ test('planWindows: 10 秒尾巴被并掉，50 秒尾巴保留', () => {
   assert.equal(long.windows.length, 3);
   assert.deepEqual(long.windows.map((w) => w.duration), [300, 300, 50]);
 });
+
+test('planWindows: 边界吸附到剪辑点，且不把窗口压太短', () => {
+  // 92s / 30s → 边界在 30、60；把一个切点放在 31.2（在 30 的 20% 内）
+  const p = planWindows(92, 30, { boundaries: [31.2, 58.9], maxWindows: 99 });
+  const froms = p.windows.map((w) => w.from);
+  const tos = p.windows.map((w) => w.to);
+  assert.ok(froms.includes(31.2), `第一个边界应吸到 31.2，实得 ${JSON.stringify(froms)}`);
+  assert.equal(p.snapped, 2);
+  // 窗口必须首尾相接、覆盖全片
+  assert.equal(froms[0], 0);
+  assert.equal(tos.at(-1), 92);
+  for (let i = 1; i < froms.length; i++) assert.equal(froms[i], tos[i - 1]);
+});
+
+test('planWindows: 切点太远就不吸附', () => {
+  const p = planWindows(92, 30, { boundaries: [45], maxWindows: 99 });
+  assert.equal(p.snapped, 0);
+  assert.ok(!p.windows.map((w) => w.from).includes(45));
+});

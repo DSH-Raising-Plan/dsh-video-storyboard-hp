@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0] — 2026-10-27
+
+**"How fast is this cut?" is now a number in the text, not something the model has to count.**
+
+- Every cell line carries `cuts N` when that cell contains shot changes, and the header carries
+  `cuts="141 (avg 2.1s)"`. The yellow ticks on the footer strip already show *where*; this says *how many*.
+- `video_zoom` accepts `minGap` — re-read a fast-cut montage with `minGap: 0.4` and 0.3 s shots get their
+  own cell instead of being merged into a neighbour.
+- `video_zoom` accepts `layout: 'strip'` — one row of cells for a short window of continuous motion.
+  Falls back to a grid if the strip would exceed 12:1 (vision encoders resize by the long edge, so an
+  18:1 strip leaves every cell ~100 px wide).
+- `--batch` now scans once for cut points and **snaps window boundaries to real cuts** (`--no-snap` to
+  disable). A 92 s clip at 30 s windows lands on 0–30.88 / 30.88–59.88 / 59.88–92 instead of the clock.
+- Audio strip height is capped by cell height, so a 2476 px-wide strip layout no longer gets a 136 px
+  footer eating 37 % of the image.
+
+Tests 174 → 176.
+
 ## [0.2.0] — 2026-10-27
 
 **Text side now has a budget and paging.** A 2 h 35 min film produced a 75 KB index; the host folded 44 %

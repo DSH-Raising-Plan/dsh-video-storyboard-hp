@@ -8,7 +8,7 @@
 import { probeVideo, DEFAULT_FFMPEG, DEFAULT_FFPROBE } from './probe.js';
 import { scanShots } from './scan.js';
 import { fitSegments, segmentsFromCuts, totalDur } from './segments.js';
-import { bestLayout, groupByCount, suggest } from './plan.js';
+import { MAX_STRIP_ASPECT, bestLayout, groupByCount, suggest } from './plan.js';
 import { findBursts, planCellRanges } from './density.js';
 import { analyzeAudio, describeAudio, detectOnsets } from './audio.js';
 import {
@@ -55,6 +55,7 @@ export async function runStoryboard(opts) {
     asrMaxChunk = 45,
     cache = true,
     textOnly = false,
+    layout = 'auto',
     badgeRatio = 0.15,
     budget = 640_000,
     encode = true,
@@ -237,7 +238,14 @@ export async function runStoryboard(opts) {
   let index = 0;
   for (const [si, group] of groups.entries()) {
     if (group.length === 0) continue;
-    const { cols, rows } = bestLayout(Math.max(1, group.length), info.aspect);
+    // 长条（1×N）只在"短窗口"里用：宽高比一旦超过 12:1，很多视觉编码器会按最长边缩放，
+    // 每格只剩一百多像素宽，反而不如宫格。超了就退回宫格并在清单里说明。
+    const strip = layout === 'strip';
+    const stripAspect = group.length * info.aspect;
+    const useStrip = strip && stripAspect <= MAX_STRIP_ASPECT;
+    const { cols, rows } = useStrip
+      ? { cols: Math.max(1, group.length), rows: 1 }
+      : bestLayout(Math.max(1, group.length), info.aspect);
     // 有音频带时先扣掉条带占用的预算：layoutCanvas 与 composeSheet 必须用**同一个** budget，
     // 否则取帧尺寸和拼图尺寸不一致，图会变成斜条纹（踩过）
     const cellBudget = stripAudio ? Math.round(budget * 0.9) : budget;
@@ -255,12 +263,15 @@ export async function runStoryboard(opts) {
         });
       frames.push({ buffer: frame.buffer, index });
       const text = aligned[gi] ?? null;
+      // 这一格里切了几刀 —— 快闪蒙太奇的"速度"就是这个数字，模型不用自己数刻度
+      const cellCuts = scan.cuts.filter((c) => c.t >= a && c.t < b).length;
       cellMeta.push({
         i: index,
         sheet: si + 1,
         t_start: +a.toFixed(3),
         t_end: +b.toFixed(3),
         t_frame: +frame.t.toFixed(3),
+        ...(cellCuts > 0 ? { cuts: cellCuts } : {}),
         ...(frame.sharp !== undefined ? { sharp: +frame.sharp.toFixed(1) } : {}),
         ...(text?.text ? { text: text.text, charsPerSec: text.charsPerSec } : {}),
       });
@@ -269,13 +280,17 @@ export async function runStoryboard(opts) {
       frames, cols, rows, cellAspect: info.aspect, budget: cellBudget, burn, badgeRatio,
     });
     if (stripAudio) {
+      // 条带高度按"宽的 5.5%"会在大长条上失控（2476px 宽 → 136px 高，占掉 37% 画面），
+      // 所以同时受格高的 40% 约束。
+      const stripH = Math.max(24, Math.min(Math.round(width * 0.055), Math.round(cellH * 0.28)));
       sheet = addAudioStrip(sheet, {
         loudness: stripAudio, silences: stripAudio.silences, cuts: scan.cuts.map((c) => c.t),
-        window: { from: winStart, to: winStart + winDur },
+        window: { from: winStart, to: winStart + winDur }, stripH,
       });
     }
     out.push({
       sheet: si + 1, cols, rows, cellW, cellH,
+      layout: useStrip ? 'strip' : 'grid',
       width: sheet.width, height: sheet.height, buffer: sheet.buffer, cells: cellMeta,
       ...(sheet.stripH ? { stripH: sheet.stripH } : {}),
       ...(encode ? { png: await encodePngBuffer(sheet.buffer, sheet.width, sheet.height, { ffmpegPath }) } : {}),
@@ -445,7 +460,10 @@ export function formatManifest(result, {
       `grid="${plan.cells} cells x ${plan.sheets} image(s)" burn="${plan.burn}"` +
       `${result.audio ? ` footer="audio-strip(${sheet0.stripH ?? 0}px)"` : ''}` +
       `${result.transcript?.source ? ` transcript="${result.transcript.source}"` : ''}` +
-      (cellRange ? ` cells="${lo}-${hi} of ${total}"` : '') + '>',
+      (cellRange ? ` cells="${lo}-${hi} of ${total}"` : '') +
+      (result.cuts?.length
+        ? ` cuts="${result.cuts.length} (avg ${(result.window.duration / Math.max(1, result.cuts.length)).toFixed(1)}s)"`
+        : '') + '>',
   ];
   if (result.audio) {
     lines.push('footer strip shares the timeline: teal bars = loudness (taller = louder), ' +
@@ -471,6 +489,7 @@ export function formatManifest(result, {
     let text = String(c.text ?? '');
     if (text.length > maxCellChars) text = `${text.slice(0, maxCellChars).trimEnd()}…`;
     const head = `cell ${c.i}${where} = ${tc(c.t_start)}-${tc(c.t_end)}` +
+      (c.cuts ? `  cuts ${c.cuts}` : '') +
       (c.sharp !== undefined ? `  sharp ${c.sharp}` : '');
     const body = text ? `${head}\n    "${text}"` : head;
     if (used + body.length + 1 > maxChars) { stoppedAt = c.i - 1; break; }

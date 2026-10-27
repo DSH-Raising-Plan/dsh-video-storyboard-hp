@@ -64,7 +64,8 @@ node bin/storyboard.mjs film.mp4 --batch 300 --out film.png
 ```
 
 A tail window under 30 s is merged into the previous one instead of spending 384 tokens on a 2-second
-window that holds a single cell.
+window that holds a single cell. Window boundaries are **snapped to real cuts** (one full scan up front,
+`--no-snap` to disable), so a window never ends in the middle of a sentence.
 
 ## Quick start
 
@@ -240,7 +241,14 @@ replies with duration/resolution/rotation/audio/subtitle tracks and, for anythin
 you to read the file in 5-minute windows instead of scanning it whole.
 
 Both run the same pipeline; zoom just narrows the window and drops `adaptive`, so each cell gets
-~4× the pixels of a 16-cell overview. On the same 96–128 s window of a talking-head video:
+~4× the pixels of a 16-cell overview.
+
+Two extra knobs on `video_zoom`, both aimed at fast-cut montage:
+
+- `minGap: 0.4` — lower the minimum spacing so half-second shots get their own cell instead of being
+  merged into a neighbour. Default is 1.2 s.
+- `layout: 'strip'` — one row instead of a grid, for a 2–4 s beat where *sequence* matters more than any
+  single frame. Silently falls back to a grid when the strip would exceed 12:1. On the same 96–128 s window of a talking-head video:
 `video_zoom` at 429×239 per cell renders the burned-in subtitles **readably**; the 16-cell overview
 at 261×145 does not.
 
@@ -253,6 +261,10 @@ half-second shots — so the burst gets one frame and loses five. Instead, cell 
 where the **integral of local cut rate** is equal: `density(t) = clamp(localRate / meanRate, 1, 2.5)`.
 Dense stretches get short cells (more frames per second), calm stretches get long ones. The timeline
 is still covered end to end, cell count and token cost are unchanged.
+
+Each cell also reports **how many cuts happened inside it** (`cuts 7`), and the header reports the total
+with the average spacing (`cuts="141 (avg 2.1s)"`). That is the answer to "how fast is this section cut" —
+the yellow ticks on the footer show *where*, the number says *how many*.
 
 On a 90 s PV: uniform gives 4.5–9.6 s cells; adaptive gives 3.9 s in the fast section and 10.6 s in
 the still ones — and the closing title card, which uniform sampled as a blurry credit list, is now a

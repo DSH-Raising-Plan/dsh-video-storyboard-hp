@@ -19,7 +19,7 @@ const opt = parse(process.argv.slice(2), {
   cells: 0, sheets: 0, from: 0, to: 0, threshold: 'auto', 'min-gap': 1.2,
   pick: 'sharp', burn: 'index', badge: 0.15, transcript: 'auto',
   out: 'storyboard.png', manifest: null, plan: 0, 'text-only': false, 'cell-range': null,
-  batch: 0,
+  batch: 0, layout: 'auto',
 });
 const input = opt._[0];
 if (!input) {
@@ -50,7 +50,18 @@ if (Number(opt.plan) > 0) {
 // 一部 2 小时半的电影手工敲 24 次 --from/--to 不现实，这是给长片用的入口。
 const batchStep = Number(opt.batch) || 0;
 if (batchStep > 0) {
-  const planW = planWindows(info.duration, batchStep);
+  // 先全片扫一遍拿切点，让窗口边界落在剪辑点上（而不是钟表上）。
+  // 2 小时片约 25s，相对于几十个窗口的渲染时间可以忽略。
+  let boundaries = [];
+  if (opt.snap !== false) {
+    const { scanShots } = await import('../src/scan.js');
+    console.log('[batch] 全片扫描切点（用于窗口对齐，可加 --no-snap 跳过）…');
+    const scan = await scanShots({ input, fps: info.fps, threshold: 'auto' });
+    boundaries = scan.cuts.map((c) => c.t);
+    console.log(`[batch] 切点 ${boundaries.length} 个`);
+  }
+  const planW = planWindows(info.duration, batchStep, { boundaries });
+  if (planW.snapped) console.log(`[batch] ${planW.snapped} 个窗口边界吸附到剪辑点`);
   const base = String(opt.out).replace(/\.png$/i, '');
   const rows = [];
   const t0 = Date.now();
@@ -102,6 +113,7 @@ const r = await runStoryboard({
   transcript: String(opt.transcript),
   adaptive,
   textOnly,
+  layout: String(opt.layout),
 });
 
 console.log(`[probe] ${info.width}x${info.height} ${info.fps.toFixed(2)}fps ${info.duration.toFixed(2)}s` +
