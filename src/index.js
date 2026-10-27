@@ -41,7 +41,7 @@ async function loadDefineTool() {
 }
 
 /** 跑一次管线，把每张图提交成附件，返回规范值 { images, text } */
-async function runAndAttach(ctx, options, problems) {
+async function runAndAttach(ctx, options, problems, cellRange) {
   if (problems.length > 0) throw new Error(`invalid arguments: ${problems.join('; ')}`);
   const result = await runStoryboard(options);
   const images = [];
@@ -52,7 +52,9 @@ async function runAndAttach(ctx, options, problems) {
       name: `storyboard-${sheet.sheet}.png`,
     }));
   }
-  return { images, text: formatManifest(result) };
+  // 预算：单次工具结果有上限，超出会被宿主折进磁盘（模型常常不会去读）。
+  // 24k 字符 ≈ 一张 16 格图的完整清单还有余量；超了就在 cell 边界截断并给出续读方式。
+  return { images, text: formatManifest(result, { cellRange }) };
 }
 
 export async function apply(ctx) {
@@ -70,7 +72,8 @@ export async function apply(ctx) {
       burn: args.burn ?? 'index',
       minGap: args.minGap ?? 1.2,
       transcript: args.transcript ?? 'auto',
-    }, validateToolArgs(args)),
+      textOnly: args.textOnly === true,
+    }, validateToolArgs(args), args.cellRange ?? null),
   });
 
   const zoom = defineTool({

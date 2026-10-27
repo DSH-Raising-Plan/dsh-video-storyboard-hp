@@ -12,8 +12,8 @@ import { bestLayout, groupByCount, suggest } from './plan.js';
 import { findBursts, planCellRanges } from './density.js';
 import { analyzeAudio, describeAudio } from './audio.js';
 import {
-  alignCells, describeAsrTarget, explainFetchError, extractSubtitleTrack, filterSuspectSegments,
-  speechCurve, transcribeLong,
+  ASR_DEFAULTS, alignCells, describeAsrTarget, explainFetchError, extractSubtitleTrack,
+  filterSuspectSegments, speechCurve, transcribeLong,
 } from './asr.js';
 import { cacheKey, pruneCache, withCache } from './cache.js';
 import {
@@ -54,6 +54,7 @@ export async function runStoryboard(opts) {
     audioStrip = true,
     asrMaxChunk = 45,
     cache = true,
+    textOnly = false,
     badgeRatio = 0.15,
     budget = 640_000,
     encode = true,
@@ -91,7 +92,7 @@ export async function runStoryboard(opts) {
   sheets = sheets || 1;
 
   // ---- 音频测量（零模型：响度 + 静音）。先做，因为静音位置要用来切 ASR 请求。
-  const needAudio = info.hasAudio && (audioStrip !== false || transcript !== 'off');
+  const needAudio = info.hasAudio && !textOnly && (audioStrip !== false || transcript !== 'off');
   const audio = needAudio
     ? await analyzeAudio({ input, ffmpegPath, start: winStart, end: winStart + winDur })
     : null;
@@ -108,11 +109,16 @@ export async function runStoryboard(opts) {
       transcriptInfo = { segments: subtitle, source: 'subtitle', model: 'embedded' };
     } else {
       try {
-        // 切片调用：单次请求过长会让时间码整体压早（实测 299s 压早 13s）
-        const asr = await transcribeLong({
+        // 切片调用：单次请求过长会让时间码整体压早（实测 299s 压早 13s）。
+        // 结果按 (文件, 窗口, 后端, 切片长度) 缓存 —— 否则 textOnly 分页每翻一页都要重跑 ASR。
+        const asrKey = await cacheKey({
+          input, start: winStart, end: winStart + winDur,
+          threshold: `asr|${ASR_DEFAULTS.baseUrl}|${ASR_DEFAULTS.model}|${asrMaxChunk}|${transcript}`,
+        });
+        const asr = await withCache(asrKey, () => transcribeLong({
           input, ffmpegPath, start: winStart, end: winStart + winDur,
           silences, maxChunk: asrMaxChunk,
-        });
+        }), { enabled: cache });
         if (asr) {
           // 音乐段的幻觉句会命中多个格子、被复制好几遍，先过滤（结果里报出来，不静默丢）
           const { kept, dropped } = filterSuspectSegments(asr.segments);
@@ -159,6 +165,44 @@ export async function runStoryboard(opts) {
   }
   const groups = [];
   for (let i = 0; i < sheets; i++) groups.push(cellRanges.slice(i * cells, (i + 1) * cells));
+
+  // textOnly：只重算"格 → 时间段 → 台词"，一帧都不解、一张图都不拼。
+  // 用途：总览文本被宿主截断后，按 cellRange 分批把剩下的台词取回来（第二次调用命中缓存，几乎瞬时）。
+  if (textOnly) {
+    const cellsMeta = [];
+    let n = 0;
+    for (const group of groups) {
+      const aligned = alignCells(group, transcriptInfo?.segments ?? []);
+      group.forEach(({ from: a, to: b }, gi) => {
+        n += 1;
+        const t = aligned[gi] ?? null;
+        cellsMeta.push({
+          i: n,
+          t_start: +a.toFixed(3),
+          t_end: +b.toFixed(3),
+          ...(t?.text ? { text: t.text, charsPerSec: t.charsPerSec } : {}),
+        });
+      });
+    }
+    return {
+      info,
+      window: { from: winStart, to: winStart + winDur, duration: winDur },
+      cuts: scan.cuts,
+      summary: scan.summary,
+      threshold: scan.threshold,
+      cached: Boolean(scan.cached),
+      audio: null,
+      transcript: transcriptInfo
+        ? { source: transcriptInfo.source, model: transcriptInfo.model ?? null,
+          segments: (transcriptInfo.segments ?? []).length }
+        : null,
+      plan: { cells, sheets, adaptive, pick, burn, minGap, reason: suggestion?.reason ?? 'explicit', bursts: [] },
+      sheets: [],
+      cells: cellsMeta,
+      textOnly: true,
+      totalDuration: +cellRanges.reduce((n2, r) => n2 + (r.to - r.from), 0).toFixed(3),
+    };
+  }
 
   const out = [];
   let index = 0;
@@ -261,34 +305,76 @@ const tc = (t) => {
  * 给模型的文本块：可寻址的格位表。
  * 编号同时给"序号"和"行列"，任一读不出来还能靠另一个定位。
  */
-export function formatManifest(result, { maxTranscriptChars = 0 } = {}) {
+/**
+ * 把结果渲染成给模型看的文本清单。
+ *
+ * **为什么要有预算**：一部 2 小时 35 分的电影，64 个 cell 的完整清单约 75KB。宿主对单次工具
+ * 结果有上限，超出部分会被折进磁盘上的溢出文件，而模型往往不会去读它（实测发生过：44% 的文本
+ * 被折叠，中段 44 分钟的台词等于没给）。所以这里做三件事：
+ *
+ *   1. 每格台词默认截到 `maxCellChars` 字符 —— 总览只需要"这一段在说什么"；
+ *   2. 总量超过 `maxChars` 时**在 cell 边界**截断，并写明续读方式（不切断句子、不丢格）；
+ *   3. `cellRange` 只取一段，配合 `textOnly` 二次调用可以零成本把剩下的台词取回来。
+ *
+ * @param {object} result runStoryboard 的返回值
+ * @param {{maxCellChars?:number, maxChars?:number, cellRange?:[number,number]}} opts
+ */
+export function formatManifest(result, {
+  maxCellChars = 180, maxChars = 24_000, cellRange = null,
+} = {}) {
   const { info, window: win, plan } = result;
-  const sheet0 = result.sheets[0];
-  const hasStrip = Boolean(result.audio);
+  const hasSheets = Boolean(result.sheets?.length);
+  const sheet0 = result.sheets?.[0];
+
+  // 统一成一条平坦的 cell 列表：有图时从 sheets 里取（带行列），textOnly 时从 cells 里取
+  const all = [];
+  if (hasSheets) {
+    for (const sheet of result.sheets) {
+      for (const c of sheet.cells) all.push({ ...c, cols: sheet.cols, sheet: sheet.sheet });
+    }
+  } else if (Array.isArray(result.cells)) {
+    for (const c of result.cells) all.push(c);
+  }
+  const total = all.length;
+  const [lo, hi] = Array.isArray(cellRange) && cellRange.length === 2
+    ? [Math.max(1, cellRange[0]), Math.min(total, cellRange[1])]
+    : [1, total];
+  const picked = all.filter((c) => c.i >= lo && c.i <= hi);
+
   const lines = [
     `<storyboard path="${info.path ?? 'video'}" duration="${info.duration.toFixed(2)}" ` +
       `window="${win.from.toFixed(2)}-${win.to.toFixed(2)}" ` +
-      `image="${sheet0?.width}x${sheet0?.height}" ` +
-      `grid="${plan.cells} cells x ${result.sheets.length} image(s)" burn="${plan.burn}"` +
-      `${hasStrip ? ` footer="audio-strip(${sheet0.stripH ?? 0}px)"` : ''}` +
-      `${result.transcript?.source ? ` transcript="${result.transcript.source}"` : ''}>`,
+      `image="${hasSheets ? `${sheet0.width}x${sheet0.height}` : 'none (text only)'}" ` +
+      `grid="${plan.cells} cells x ${plan.sheets} image(s)" burn="${plan.burn}"` +
+      `${result.audio ? ` footer="audio-strip(${sheet0.stripH ?? 0}px)"` : ''}` +
+      `${result.transcript?.source ? ` transcript="${result.transcript.source}"` : ''}` +
+      (cellRange ? ` cells="${lo}-${hi} of ${total}"` : '') + '>',
   ];
-  if (hasStrip) {
+  if (result.audio) {
     lines.push('footer strip shares the timeline: teal bars = loudness (taller = louder), ' +
       'dark blocks = silence, yellow ticks = cut points.');
   }
-  for (const sheet of result.sheets) {
-    for (const c of sheet.cells) {
-      const pos = (c.i - 1) % plan.cells;
-      const r = Math.floor(pos / sheet.cols) + 1;
-      const col = (pos % sheet.cols) + 1;
-      const head = `cell ${c.i} (r${r}c${col}, image ${sheet.sheet}) = ` +
-        `${tc(c.t_start)}-${tc(c.t_end)}  frame@${tc(c.t_frame)}` +
-        (c.sharp !== undefined ? `  sharp ${c.sharp}` : '');
-      lines.push(c.text ? `${head}\n    "${c.text}"` : head);
-    }
+
+  let used = lines.join('\n').length;
+  let stoppedAt = null;
+  for (const c of picked) {
+    const pos = (c.i - 1) % plan.cells;
+    const where = typeof c.cols === 'number'
+      ? ` (r${Math.floor(pos / c.cols) + 1}c${(pos % c.cols) + 1}, image ${c.sheet})` : '';
+    let text = String(c.text ?? '');
+    if (text.length > maxCellChars) text = `${text.slice(0, maxCellChars).trimEnd()}…`;
+    const head = `cell ${c.i}${where} = ${tc(c.t_start)}-${tc(c.t_end)}` +
+      (c.sharp !== undefined ? `  sharp ${c.sharp}` : '');
+    const body = text ? `${head}\n    "${text}"` : head;
+    if (used + body.length + 1 > maxChars) { stoppedAt = c.i - 1; break; }
+    lines.push(body);
+    used += body.length + 1;
   }
-  if (result.audio?.summary) lines.push(`audio (measured): ${result.audio.summary}`);
+
+  if (stoppedAt !== null) {
+    lines.push(`[text stopped at cell ${stoppedAt} of ${hi} — ` +
+      `call again with cellRange: [${stoppedAt + 1}, ${hi}] and textOnly: true to read the rest]`);
+  }
   if (result.transcript?.source === 'asr') {
     lines.push('transcript is ASR output (not a subtitle track): technical terms and names may be ' +
       'misheard — cross-check against on-screen text before quoting them.');
@@ -303,9 +389,8 @@ export function formatManifest(result, { maxTranscriptChars = 0 } = {}) {
     lines.push(`transcript unavailable: ${result.transcript.error ?? 'ASR call failed'}`);
   }
   if (result.transcript?.source === 'no-audio') lines.push('no audio track: grid is visual only');
-  lines.push(`total ${result.sheets.reduce((n, sh) => n + sh.cells.length, 0)} cells; ` +
-    'unlabeled cells are padding, not content.');
+  lines.push(`total ${picked.length} of ${total} cells shown` +
+    (hasSheets ? '; unlabeled cells are padding, not content.' : '.'));
   lines.push('</storyboard>');
-  const text = lines.join('\n');
-  return maxTranscriptChars > 0 ? text.slice(0, maxTranscriptChars) : text;
+  return lines.join('\n');
 }

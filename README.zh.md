@@ -45,6 +45,25 @@
 
 ---
 
+## 长片：文本清单也是有预算的
+
+一张图 384 token，但**文本清单是没有上限的**——一部 2 小时 35 分的片子出 64 个 cell，清单 **75 KB**，
+超过宿主单次工具结果的上限，超出部分被折进磁盘上的溢出文件，模型没去读，于是**中段 44 分钟的台词等于没给**。
+现在三件事堵住这个口子：
+
+- **每格台词封顶 180 字符**（默认）——总览只需要"这一段在讲什么"，不需要整句字幕；
+- **在 cell 边界截断**，并写明怎么续读：
+  `[text stopped at cell 13 of 64 — call again with cellRange: [14, 64] and textOnly: true to read the rest]`
+- **`cellRange` + `textOnly`**：翻页取文本，不重出图、不重解帧。
+
+```js
+video_storyboard({ input, cells: 16, sheets: 4 })                     // 4 张图 + 第一页文本
+video_storyboard({ input, cells: 16, sheets: 4, cellRange: [14, 42], textOnly: true })
+video_storyboard({ input, cells: 16, sheets: 4, cellRange: [43, 64], textOnly: true })
+```
+
+`textOnly` 不返回图，所以翻页不花 token；扫描与 ASR 结果都缓存后，**每页约 0.8 秒**。
+
 ## 一、它到底解决了什么问题
 
 纯文本模型看不到视频。现有三条路各有硬伤：

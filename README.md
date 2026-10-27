@@ -36,6 +36,26 @@ Eight decisions, each made because the obvious alternative failed on real footag
 Prior art, accuracy ceilings we do not try to beat, and the things we deliberately left out:
 **[docs/REFERENCES.md](docs/REFERENCES.md)**.
 
+## Long films: the text index has a budget
+
+One image is 384 tokens, but the *text* index is unbounded — a 2 h 35 min film produced 64 cells and a
+**75 KB** index, which exceeded the host's tool-result limit. The excess was folded into a file on disk and
+never read, so 44 minutes of dialogue were silently missing. Three things prevent that now:
+
+- **Per-cell cap** (180 chars by default). An overview needs "what is this stretch about", not the full line.
+- **Cell-aligned truncation** with an explicit continuation hint:
+  `[text stopped at cell 13 of 64 — call again with cellRange: [14, 64] and textOnly: true to read the rest]`
+- **`cellRange` + `textOnly`** — page through the index without re-rendering images or re-decoding frames.
+
+```js
+video_storyboard({ input, cells: 16, sheets: 4 })                     // 4 images + first page of text
+video_storyboard({ input, cells: 16, sheets: 4, cellRange: [14, 42], textOnly: true })
+video_storyboard({ input, cells: 16, sheets: 4, cellRange: [43, 64], textOnly: true })
+```
+
+`textOnly` returns no image, so paging costs nothing in tokens; with the scan **and** ASR results cached it
+takes ~0.8 s per page after the first call.
+
 ## Quick start
 
 ```bash

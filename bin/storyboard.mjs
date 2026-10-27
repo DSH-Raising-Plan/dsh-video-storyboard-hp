@@ -18,7 +18,7 @@ import { formatManifest, runStoryboard, saveStoryboards } from '../src/pipeline.
 const opt = parse(process.argv.slice(2), {
   cells: 0, sheets: 0, from: 0, to: 0, threshold: 'auto', 'min-gap': 1.2,
   pick: 'sharp', burn: 'index', badge: 0.15, transcript: 'auto',
-  out: 'storyboard.png', manifest: null, plan: 0,
+  out: 'storyboard.png', manifest: null, plan: 0, 'text-only': false, 'cell-range': null,
 });
 const input = opt._[0];
 if (!input) {
@@ -46,6 +46,13 @@ if (Number(opt.plan) > 0) {
 }
 
 const adaptive = !process.argv.includes('--no-adaptive');
+const textOnly = Boolean(opt['text-only']);
+const cellRange = (() => {
+  const raw = opt['cell-range'];
+  if (!raw) return null;
+  const m = String(raw).match(/^(\d+)-(\d+)$/);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+})();
 const t0 = Date.now();
 const r = await runStoryboard({
   input,
@@ -60,6 +67,7 @@ const r = await runStoryboard({
   badgeRatio: Number(opt.badge) || 0.15,
   transcript: String(opt.transcript),
   adaptive,
+  textOnly,
 });
 
 console.log(`[probe] ${info.width}x${info.height} ${info.fps.toFixed(2)}fps ${info.duration.toFixed(2)}s` +
@@ -98,4 +106,4 @@ if (opt.manifest) {
   console.log(`[manifest] ${opt.manifest}`);
 }
 
-if (opt.text) console.log(`\n${formatManifest(r)}`);
+if (opt.text) console.log(`\n${formatManifest(r, { cellRange })}`);

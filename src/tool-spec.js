@@ -74,6 +74,18 @@ export function storyboardToolSpec() {
         enum: ['auto', 'off'],
         description: 'Default "auto": use the embedded subtitle track if present, otherwise ASR when configured. "off" skips speech entirely.',
       },
+      cellRange: {
+        type: 'array',
+        items: { type: 'integer' },
+        description: 'Only render cells [first, last] (1-based, inclusive) in the text index. ' +
+          'For a 2-hour film the full 64-cell index is ~75 KB, which can exceed one tool result — ' +
+          'the index says where it stopped and which cellRange to ask for next.',
+      },
+      textOnly: {
+        type: 'boolean',
+        description: 'Return only the text index (respecting cellRange) — no image is produced and no ' +
+          'frame is decoded. Use it to page through a long film after the first visual pass; the scan is cached.',
+      },
     },
     output: {
       schema: {
@@ -184,6 +196,17 @@ export function validateToolArgs(args) {
   if (args.minGap !== undefined && !(args.minGap >= 0)) problems.push('minGap must be >= 0');
   if (args.transcript !== undefined && !['auto', 'off'].includes(args.transcript)) {
     problems.push("transcript must be 'auto' or 'off'");
+  }
+  if (args.cellRange !== undefined) {
+    const r = args.cellRange;
+    if (!Array.isArray(r) || r.length !== 2 || r.some((v) => !Number.isInteger(v))) {
+      problems.push('cellRange must be two integers: [first, last]');
+    } else if (r[0] < 1 || r[1] < r[0]) {
+      problems.push('cellRange must satisfy 1 <= first <= last');
+    }
+  }
+  if (args.textOnly !== undefined && typeof args.textOnly !== 'boolean') {
+    problems.push('textOnly must be a boolean');
   }
   return problems;
 }
