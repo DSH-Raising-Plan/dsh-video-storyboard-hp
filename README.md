@@ -70,7 +70,9 @@ One image is 384 tokens, but the *text* index is unbounded — a 2 h 35 min film
 **75 KB** index, which exceeded the host's tool-result limit. The excess was folded into a file on disk and
 never read, so 44 minutes of dialogue were silently missing. Three things prevent that now:
 
-- **Per-cell cap** (180 chars by default). An overview needs "what is this stretch about", not the full line.
+- **Per-cell cap**, three levels: `detail: low` 60 / `med` 120 (default) / `high` 400 characters, and the
+  cut lands on a **sentence boundary** — a budget of 120 stops at the last `。` inside the window rather
+  than mid-word. Measured on 9 cells: 1,521 / 1,915 / 3,031 characters.
 - **Cell-aligned truncation** with an explicit continuation hint:
   `[text stopped at cell 13 of 64 — call again with cellRange: [14, 64] and textOnly: true to read the rest]`
 - **`cellRange` + `textOnly`** — page through the index without re-rendering images or re-decoding frames.

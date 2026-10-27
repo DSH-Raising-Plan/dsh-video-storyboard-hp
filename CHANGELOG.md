@@ -24,7 +24,14 @@ information lost that the model can actually use.
   manifest
 - `image 1` dropped when there is only one sheet (it is pure redundancy); kept for multi-sheet
 
-Tests 174 → 176.
+**`detail: low | med | high`** — transcript budget per cell, and truncation now lands on a
+sentence boundary instead of cutting mid-word.
+
+Measured on a 9-cell run: `low` 1,521 chars · `med` 1,915 · `high` 3,031. Note that med is *cheaper*
+than the old hard-cut 120 (2,171) even though the budget is the same, because stopping at the last
+sentence end usually costs fewer characters than filling the quota.
+
+Tests 174 → 183.
 
 ## [0.2.0] — 2026-10-27
 

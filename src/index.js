@@ -12,7 +12,7 @@
  *  - saveImage 要的是**真正编码后的字节**（PNG/JPEG），不是裸 RGB —— 它会解码校验
  */
 
-import { runStoryboard, formatManifest, formatProbe } from './pipeline.js';
+import { DETAIL_CHARS, runStoryboard, formatManifest, formatProbe } from './pipeline.js';
 import { probeVideo } from './probe.js';
 import {
   storyboardToolSpec, zoomToolSpec, probeToolSpec, validateToolArgs, validateZoomArgs,
@@ -55,7 +55,13 @@ async function runAndAttach(ctx, options, problems, cellRange) {
   }
   // 预算：单次工具结果有上限，超出会被宿主折进磁盘（模型常常不会去读）。
   // 24k 字符 ≈ 一张 16 格图的完整清单还有余量；超了就在 cell 边界截断并给出续读方式。
-  return { images, text: formatManifest(result, { cellRange }) };
+  return {
+    images,
+    text: formatManifest(result, {
+      cellRange,
+      maxCellChars: DETAIL_CHARS[options.detail] ?? DETAIL_CHARS.med,
+    }),
+  };
 }
 
 export async function apply(ctx) {
@@ -74,6 +80,7 @@ export async function apply(ctx) {
       minGap: args.minGap ?? 1.2,
       transcript: args.transcript ?? 'auto',
       textOnly: args.textOnly === true,
+      detail: args.detail ?? 'med',
     }, validateToolArgs(args), args.cellRange ?? null),
   });
 

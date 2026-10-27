@@ -13,13 +13,15 @@ import { writeFile } from 'node:fs/promises';
 import { args as parse } from './_args.mjs';
 import { probeVideo } from '../src/probe.js';
 import { planWindows } from '../src/plan.js';
-import { formatManifest, formatTimeline, runStoryboard, saveStoryboards } from '../src/pipeline.js';
+import {
+  DETAIL_CHARS, formatManifest, formatTimeline, runStoryboard, saveStoryboards,
+} from '../src/pipeline.js';
 
 const opt = parse(process.argv.slice(2), {
   cells: 0, sheets: 0, from: 0, to: 0, threshold: 'auto', 'min-gap': 1.2,
   pick: 'sharp', burn: 'index', badge: 0.15, transcript: 'auto',
   out: 'storyboard.png', manifest: null, plan: 0, 'text-only': false, 'cell-range': null,
-  batch: 0, layout: 'auto',
+  batch: 0, layout: 'auto', detail: 'med',
 });
 const input = opt._[0];
 if (!input) {
@@ -155,4 +157,8 @@ if (opt.manifest) {
   console.log(`[manifest] ${opt.manifest}`);
 }
 
-if (opt.text) console.log(`\n${formatManifest(r, { cellRange })}`);
+if (opt.text) {
+  console.log(`\n${formatManifest(r, {
+    cellRange, maxCellChars: DETAIL_CHARS[String(opt.detail)] ?? DETAIL_CHARS.med,
+  })}`);
+}

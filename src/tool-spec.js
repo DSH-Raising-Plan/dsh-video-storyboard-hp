@@ -75,6 +75,13 @@ export function storyboardToolSpec() {
         enum: ['auto', 'off'],
         description: 'Default "auto": use the embedded subtitle track if present, otherwise ASR when configured. "off" skips speech entirely.',
       },
+      detail: {
+        type: 'string',
+        enum: ['low', 'med', 'high'],
+        description: 'How many characters of transcript per cell: low=60 (is this stretch about X?), ' +
+          'med=120 (default), high=400 (quote-level). Truncation lands on a sentence boundary. ' +
+          'Use cellRange + textOnly to read one cell in full.',
+      },
       cellRange: {
         type: 'array',
         items: { type: 'integer' },
@@ -256,6 +263,9 @@ export function validateToolArgs(args) {
   }
   if (args.textOnly !== undefined && typeof args.textOnly !== 'boolean') {
     problems.push('textOnly must be a boolean');
+  }
+  if (args.detail !== undefined && !['low', 'med', 'high'].includes(args.detail)) {
+    problems.push("detail must be 'low', 'med' or 'high'");
   }
   return problems;
 }

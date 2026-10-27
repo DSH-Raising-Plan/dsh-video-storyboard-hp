@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatManifest } from '../src/pipeline.js';
+import { DETAIL_CHARS, formatManifest, truncateAtSentence } from '../src/pipeline.js';
 
 /** 造一个 64 格的 result（每格 300 字），不跑 ffmpeg */
 function makeResult({ cells = 64, textLen = 300 } = {}) {
@@ -96,4 +96,42 @@ test('textOnly 结果：没有图，但格与台词齐全', () => {
   assert.equal(text.split('\n').filter((l) => l.startsWith('cell ')).length, 64);
   // 没有行列信息时不应编造 r/c
   assert.ok(!/\(r\d+c\d+, image/.test(text));
+});
+
+/* ---------------------------------------------------------------- 句末截断 */
+
+test('truncateAtSentence: 不超限时原样返回', () => {
+  assert.equal(truncateAtSentence('短句。', 60), '短句。');
+});
+
+test('truncateAtSentence: 在句末截断，不切半句', () => {
+  const text = '第一句话在这里结束。第二句话稍微长一点也结束了。第三句话会被截掉。';
+  // 上限 30：第二个句号在索引 23，落在 [15,29] 窗口内，应该正好在那里截
+  const out = truncateAtSentence(text, 30);
+  assert.ok(out.endsWith('…'), `应带省略号，实得 ${out}`);
+  // 截断点必须在句号之后
+  assert.match(out, /。…$/);
+  assert.ok(out.length <= 30, `不该超过上限，实得 ${out.length}`);
+});
+
+test('truncateAtSentence: 没有标点时退回硬切', () => {
+  const out = truncateAtSentence('一二三四五六七八九十一二三四五六七八九十', 10);
+  assert.equal(out, '一二三四五六七八九…');
+  assert.ok(out.length <= 10, '总长不该超过上限（省略号占一格）');
+});
+
+test('truncateAtSentence: 英文句号也认（但不能被小数点骗）', () => {
+  assert.ok(truncateAtSentence('First sentence here. Second one follows and is long.', 24).endsWith('.…'));
+  const out = truncateAtSentence('value 3.14 is pi and more text follows', 20);
+  assert.ok(!/3\.…$/.test(out), `不该在小数点后截断：${out}`);
+});
+
+test('detail 三档：越小越省，且都从格边界截', () => {
+  const variants = Object.entries(DETAIL_CHARS).map(([k, v]) => {
+    const text = formatManifest(makeResult(), { maxChars: 200_000, maxCellChars: v });
+    return { k, v, len: text.length };
+  });
+  assert.ok(variants[0].len < variants[1].len, 'low 应比 med 短');
+  assert.ok(variants[1].len < variants[2].len, 'med 应比 high 短');
+  for (const { k, len } of variants) assert.ok(len > 0, `${k} 不该为空`);
 });

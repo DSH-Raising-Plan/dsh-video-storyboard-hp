@@ -413,6 +413,34 @@ export function formatProbe(info) {
   return lines.join('\n');
 }
 
+/** 三档台词预算（字符）：low 只判断"这段在讲什么"，high 要能引用原话 */
+export const DETAIL_CHARS = { low: 60, med: 120, high: 400 };
+
+/**
+ * 在**句末**截断，而不是从第 N 个字符硬切。
+ *
+ * 硬切的坏处很具体：`"…而且都混在一"` 这种半截句子会让模型以为台词本身就这样断了。
+ * 规则：
+ *  1. 文本不超限 → 原样返回；
+ *  2. 在 `[limit*0.5, limit]` 里找最后一个句末标点（中英都认），在那之后截且补 `…`；
+ *  3. 找不到 → 退回硬切（总比丢了整段好）。
+ */
+export function truncateAtSentence(text, limit) {
+  const src = String(text ?? '');
+  if (!(limit > 0) || src.length <= limit) return src;
+  // 省略号本身占一格：内容只取 limit-1，保证总长不超过 limit（方便预算）
+  const room = Math.max(1, limit - 1);
+  const head = src.slice(0, room);
+  const re = /[。！？；…!?;]|\.(?=\s|$)/g;
+  let best = -1;
+  let m;
+  while ((m = re.exec(head)) !== null) {
+    if (m.index + 1 >= Math.floor(room * 0.5)) best = m.index + 1;
+  }
+  if (best > 0) return `${src.slice(0, best)}…`;
+  return `${head.trimEnd()}…`;
+}
+
 /**
  * 多窗口批处理的汇总表（Markdown）。
  *
@@ -510,8 +538,7 @@ export function formatManifest(result, {
       ? ` (r${Math.floor(pos / c.cols) + 1}c${(pos % c.cols) + 1}` +
         `${result.sheets.length > 1 ? `, image ${c.sheet}` : ''})`
       : '';
-    let text = String(c.text ?? '');
-    if (text.length > maxCellChars) text = `${text.slice(0, maxCellChars).trimEnd()}…`;
+    const text = truncateAtSentence(c.text, maxCellChars);
     // sharp 只留在 JSON 清单里：给模型一个 "479.7" 它无法判断好坏，纯占字符
     const head = `cell ${c.i}${where} = ${tc(c.t_start)}-${tc(c.t_end)}` +
       (c.cuts ? `  cuts ${c.cuts}` : '');
