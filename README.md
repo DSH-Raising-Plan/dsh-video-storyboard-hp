@@ -56,6 +56,16 @@ video_storyboard({ input, cells: 16, sheets: 4, cellRange: [43, 64], textOnly: t
 `textOnly` returns no image, so paging costs nothing in tokens; with the scan **and** ASR results cached it
 takes ~0.8 s per page after the first call.
 
+**CLI batch mode** for a whole film, where 24 separate calls is not a workflow:
+
+```bash
+node bin/storyboard.mjs film.mp4 --batch 300 --out film.png
+# → film-w01.png … film-w24.png  +  film-timeline.md (window | cells | cuts | chars | image)
+```
+
+A tail window under 30 s is merged into the previous one instead of spending 384 tokens on a 2-second
+window that holds a single cell.
+
 ## Quick start
 
 ```bash
@@ -64,6 +74,7 @@ cd dsh-video-storyboard
 
 node --test                                          # 154 tests (needs ffmpeg)
 node bin/storyboard.mjs your-video.mp4 --cells 9 --text   # see exactly what the model would get
+node bin/storyboard.mjs film.mp4 --batch 300              # long film: one png per 5-min window + a timeline.md
 node scripts/install-dev.mjs                         # mount into DSH, then restart DSH
 ```
 
