@@ -235,11 +235,11 @@ test('formatProbe: 长片给两种读法并标明剧透，短片不啰嗦', asyn
     videoCodec: 'h264', container: 'mp4', hasAudio: true, audioCodec: 'aac',
     hasSubtitle: true, path: 'a.mp4',
   };
-  const long = formatProbe({ ...base, duration: 9300 });
+  const long = await formatProbe({ ...base, duration: 9300 });
   assert.match(long, /STRUCTURE \(spoils the ending\)/);
   assert.match(long, /SEQUENCE \(no spoilers/);
 
-  const short = formatProbe({ ...base, duration: 30 });
+  const short = await formatProbe({ ...base, duration: 30 });
   assert.match(short, /one call is enough/);
   assert.ok(!/STRUCTURE/.test(short), '短片不该出现长片模板');
   assert.ok(short.split('\n').length <= 3, `短片文本应很短，实得 ${short.split('\n').length} 行`);

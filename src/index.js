@@ -105,7 +105,7 @@ export async function apply(ctx) {
     async execute(args) {
       if (!args?.input) throw new Error('input is required');
       const info = { ...(await probeVideo(args.input)), path: args.input };
-      return { text: formatProbe(info) };
+      return { text: await formatProbe(info) };
     },
   });
 

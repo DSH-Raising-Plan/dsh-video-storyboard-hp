@@ -315,6 +315,11 @@ where the **integral of local cut rate** is equal: `density(t) = clamp(localRate
 Dense stretches get short cells (more frames per second), calm stretches get long ones. The timeline
 is still covered end to end, cell count and token cost are unchanged.
 
+A `fast cuts:` line names the montage stretches and their shot counts. `video_probe` also reports
+`seen before:` when the cache already holds analysis for that file, so a returning agent can cite its
+earlier reading instead of describing the film again — and it stores only mechanical facts (which window,
+how many cells, how many cuts), never model output.
+
 Each cell also reports **how many cuts happened inside it** (`cuts 7`), and the header reports the total
 with the average spacing (`cuts="141 (avg 2.1s)"`). That is the answer to "how fast is this section cut" —
 the yellow ticks on the footer show *where*, the number says *how many*.

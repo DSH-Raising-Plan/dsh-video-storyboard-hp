@@ -178,3 +178,14 @@ test('formatManifest: 有台词压在静音里时给出提示', () => {
   const text = formatManifest(r, { maxChars: 200_000 });
   assert.match(text, /2 line\(s\) of text sit inside a detected silence/);
 });
+
+test('formatManifest: 有快剪爆发时报出区间与镜头数', () => {
+  const r = makeResult({ cells: 4 });
+  r.plan = { ...(r.plan ?? {}), bursts: [
+    { from: 42.8, to: 64.8, shots: 22, density: 3.1 },
+    { from: 69, to: 73.1, shots: 5, density: 1.8 },
+  ] };
+  const text = formatManifest(r, { maxChars: 200_000 });
+  assert.match(text, /fast cuts: 00:42\.80-01:04\.80 \(22 shots\)/);
+  assert.match(text, /minGap: 0\.4/);
+});

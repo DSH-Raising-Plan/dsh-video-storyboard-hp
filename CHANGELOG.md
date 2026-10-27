@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+Two things borrowed from a community PR, both about giving the model information it cannot derive on
+its own — without growing the manifest much.
+
+**`fast cuts:` line.** We already reported `cuts N` per cell and the film-wide average, but neither says
+*"this stretch is a montage"*. `findBursts` was being computed and then thrown away (it also returned a
+`shots` field that was always `undefined` — a latent bug). Now the strongest bursts are listed with their
+shot counts and an actionable next step:
+
+```
+fast cuts: 00:42.80-01:04.80 (22 shots), 01:09.00-01:13.10 (5 shots) — video_zoom({ from, to, cells: 6, minGap: 0.4 }) splits these into single shots.
+```
+
+Cost: +151 characters on a 9-cell run (1,344 → 1,495).
+
+**`seen before:` line in `video_probe`.** The cache answers "has this stretch been computed"; it cannot
+answer "have I looked at this file, and which parts". Change the window, rename the file or come back
+tomorrow and everything is recomputed — which is exactly why an agent re-describes the same video every
+time. `src/memory.js` now appends one line per analysed window to `seen.jsonl` in the cache directory, and
+`video_probe` reports:
+
+```
+seen before: 2 window(s) analysed before (0-30s, 30-60s), last on 2026-10-28 00:51.
+If you already described this file, cite that instead of describing it again.
+```
+
+It stores **mechanical facts only** (path, window, cells, cuts, timestamp) — never model output, so a
+previous conclusion cannot leak into a new conversation as if it were evidence.
+
+Tests 189 → **197**.
+
 ## [0.2.2] — 2026-10-27
 
 Three things, all of them about *not* wasting the reader's attention.

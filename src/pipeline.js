@@ -10,6 +10,7 @@ import { scanShots } from './scan.js';
 import { fitSegments, segmentsFromCuts, totalDur } from './segments.js';
 import { bestLayout, groupByCount, suggest } from './plan.js';
 import { findBursts, planCellRanges } from './density.js';
+import { describeMemory, remember } from './memory.js';
 import { analyzeAudio, describeAudio, detectOnsets } from './audio.js';
 import {
   ASR_DEFAULTS, alignCells, applyTermMap, describeAsrTarget, explainFetchError, extractSubtitleTrack,
@@ -305,6 +306,14 @@ export async function runStoryboard(opts) {
   }
 
   const totalDuration = +cellRanges.reduce((n, r) => n + (r.to - r.from), 0).toFixed(3);
+
+  // 记一笔"看过什么"：下次 probe 能告诉模型"这部片子你看过"，避免重新描述一遍。
+  // 失败不影响结果（记忆是锦上添花）。
+  // 必须 await：不 await 的话下一次 probe 可能读不到这一笔（实测踩到，少了一整段）
+  await remember(info, {
+    from: winStart, to: winStart + winDur, cells: cellRanges.length, cuts: scan.cuts.length,
+  }).catch(() => {});
+
   return {
     info,
     window: { from: winStart, to: winStart + winDur, duration: winDur },
@@ -338,7 +347,8 @@ export async function runStoryboard(opts) {
       cells, sheets, adaptive, pick, burn, minGap,
       reason: suggestion?.reason ?? 'explicit',
       bursts: findBursts(relCuts, winDur).map((b) => ({
-        from: +(b.from + winStart).toFixed(2), to: +(b.to + winStart).toFixed(2), shots: b.shots,
+        from: +(b.from + winStart).toFixed(2), to: +(b.to + winStart).toFixed(2),
+        shots: b.shots, density: b.density,
       })),
     },
     sheets: out,
@@ -398,7 +408,7 @@ export function countTextInSilence(segments, silences, ratio = 0.6) {
  * video_probe 的文本：容器信息 + 一个"该怎么读"的建议。
  * 不扫描、不取帧，只花 ffprobe 的时间（几毫秒）。
  */
-export function formatProbe(info) {
+export async function formatProbe(info) {
   const mins = info.duration / 60;
   const lines = [
     `<video path="${info.path ?? ''}" duration="${info.duration.toFixed(2)}" ` +
@@ -431,6 +441,9 @@ export function formatProbe(info) {
     lines.push(`Short (${mins.toFixed(0)} min): one call is enough. Following a story rather than ` +
       'analysing structure? Use `from`/`to` windows so later scenes are not on screen early.');
   }
+  const seen = await describeMemory(info).catch(() => null);
+  if (seen) lines.push(`seen before: ${seen}`);
+
   if (!info.hasAudio) lines.push('no audio track: transcript will be empty, the grid is visual only.');
   else if (!info.hasSubtitle) lines.push('no subtitle track: transcript (if any) must come from ASR.');
   return lines.join('\n');
@@ -541,6 +554,14 @@ export function formatManifest(result, {
     lines.push('footer strip shares the timeline: teal bars = loudness (taller = louder), ' +
       'grey blocks = silence, yellow ticks = cut points.');
   }
+  // 快剪爆发点：只给"密度"和"每格几刀"还不够——模型不知道"哪一段是连拍的"。
+  // 这一行把片段区间和镜头数直接说出来，并给出可执行的下一步。
+  if (result.plan?.bursts?.length) {
+    const top = [...result.plan.bursts].sort((a, b) => (b.shots ?? 0) - (a.shots ?? 0)).slice(0, 3);
+    lines.push(`fast cuts: ${top.map((b) => `${tc(b.from)}-${tc(b.to)} (${b.shots} shots)`).join(', ')}` +
+      ' — video_zoom({ from, to, cells: 6, minGap: 0.4 }) splits these into single shots.');
+  }
+
   // 切点不多时直接列出精确时间：条带只能读个 ±2~4 秒的大概，而这一行是 0.01 秒的准确值。
   // 多于 24 个就不列（总览只需要知道"多密"，精确值留给 zoom）。
   const inWin = (result.cuts ?? []).filter((c) => c.t >= win.from && c.t <= win.to);

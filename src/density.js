@@ -97,7 +97,9 @@ export function densityCurve({
  * 找出"剪辑最密"的时段（只用于报告，不影响分配）。
  */
 export function findBursts(cuts, duration, { window = RATE_WINDOW, max = MAX_DENSITY } = {}) {
-  const { density, bins, meanRate } = densityCurve({ duration, cuts, window, max });
+  // densityCurve 只认数字；调用方有时传 {t}，这里统一一次
+  const ts = cuts.map((c) => (typeof c === 'number' ? c : c.t));
+  const { density, bins, meanRate } = densityCurve({ duration, cuts: ts, window, max });
   if (meanRate === 0) return [];
   const bursts = [];
   let start = -1;
@@ -105,10 +107,14 @@ export function findBursts(cuts, duration, { window = RATE_WINDOW, max = MAX_DEN
     const hot = i < bins && density[i] > 1.5;
     if (hot && start < 0) start = i;
     if (!hot && start >= 0) {
+      const to = +Math.min(duration, i * BIN).toFixed(2);
+      const from = +(start * BIN).toFixed(2);
       bursts.push({
-        from: +(start * BIN).toFixed(2),
-        to: +Math.min(duration, i * BIN).toFixed(2),
+        from,
+        to,
         density: +density[start].toFixed(2),
+        // 这一小段里切了几刀 —— 只有密度数字时，模型还得自己反推"到底几个镜头"
+        shots: ts.filter((t) => t >= from && t < to).length,
       });
       start = -1;
     }

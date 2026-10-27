@@ -108,3 +108,20 @@ test('planCellRanges: 非法参数抛错', () => {
   assert.throws(() => planCellRanges({ duration: 0, cells: 4 }), RangeError);
   assert.throws(() => planCellRanges({ duration: 10, cells: 0 }), RangeError);
 });
+
+test('findBursts: 爆点带上镜头数（模型不用自己反推几个镜头）', () => {
+  const cuts = [];
+  for (let i = 0; i < 120; i++) cuts.push({ t: 40 + i * 0.25 });   // 40–70s 密集
+  for (let i = 0; i < 20; i++) cuts.push({ t: 5 + i * 3 });        // 稀疏
+  const bursts = findBursts(cuts, 90);
+  assert.ok(bursts.length >= 1, '应识别出至少一个爆发段');
+  const top = bursts.sort((a, b) => b.shots - a.shots)[0];
+  assert.ok(top.shots > 50, `密集段应报出很多镜头，实得 ${top.shots}`);
+  assert.ok(top.from >= 35 && top.to <= 75, `区间应在密集段附近，实得 ${top.from}-${top.to}`);
+});
+
+test('findBursts: 传 {t} 或纯数字结果一致', () => {
+  const nums = [1, 3, 5, 7, 9, 40, 40.2, 40.4, 40.6, 40.8, 41, 41.2, 41.4];
+  const objs = nums.map((t) => ({ t }));
+  assert.deepEqual(findBursts(objs, 60), findBursts(nums, 60));
+});
